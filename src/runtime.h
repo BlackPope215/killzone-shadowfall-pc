@@ -104,6 +104,12 @@ int runtime_pad_describe(void);
 /* Button prompts (src/prompt_hook.h): keyboard/mouse icons wanted now; key bound to a prompt icon. */
 int runtime_pad_prompts_pc(void);
 int runtime_pad_prompt_binding(unsigned icon, char *label, size_t size);
+/* Free camera (src/free_camera_hook.h): while active the game reads a neutral pad and the camera
+ * takes the input. move: right, up, forward (-1..1); look: yaw, pitch (rad, since the last call)
+ * and yaw/pitch rates (rad/s); speed: m/s. keys: bit 0 F9 (toggle) pressed, bit 1 F10 (recenter)
+ * pressed since the last call. Returns 0 while the window or the menu has the input. */
+void runtime_pad_free_camera(int active);
+int runtime_pad_free_camera_input(float move[3], float look[4], float *speed, unsigned *keys);
 /* Guest flexible memory (CPU and GPU read/write) for pixels the loader hands to the game; NULL
  * when the pool is full. size: whole pages. */
 void *runtime_memory_map_host_pixels(uint64_t size);

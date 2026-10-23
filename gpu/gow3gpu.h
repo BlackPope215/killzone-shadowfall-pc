@@ -65,6 +65,9 @@ void gow3gpu_fov_register(float *cell);
 unsigned gow3gpu_post_effects_off(void);
 /* The camera shake hook's int (nonzero: the game's shake, 0: none) that the menu rewrites. */
 void gow3gpu_camera_shake_register(int *cell);
+/* The scene size cell of the upscaler quality modes (src/scene_res_hook.h Gow3SceneSize: requested
+ * width, height, then the applied ones); the menu writes the requested pair to switch live. */
+void gow3gpu_scene_size_register(uint32_t *cell);
 /* Number of symbols registered by the vendored libraries (diagnostics). */
 unsigned gow3gpu_symbol_count(void);
 #ifdef __cplusplus

@@ -1,89 +1,91 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Continuous Tactical Echo and the local-player check adapted from pearlxcore/KillzoneShadowFall-PC
+ * (src/kzsf_cheats.h, kzsf_campaign_cheats_win.h). */
 #ifndef GOW3_CHEAT_HOOK_H
 #define GOW3_CHEAT_HOOK_H
 #include <stdint.h>
+#include <stddef.h>
 #include <string.h>
 #include "signature.h"
 
-enum { GOW3_CHEAT_HEALTH, GOW3_CHEAT_MAGIC, GOW3_CHEAT_ITEM, GOW3_CHEAT_RAGE,
-       GOW3_CHEAT_ORBS, GOW3_CHEAT_VERY_HARD, GOW3_CHEAT_DOUBLE_JUMPS, GOW3_CHEAT_COUNT };
-typedef struct {
-    uint32_t offset;
-    unsigned id, length, replacement_length;
-    unsigned char original[9], replacement[40];
-    Gow3Signature site;  /* finds the hook in any build; offset is the reference build's */
-} Gow3CheatHook;
-/* Celogamez's CUSA01623 v01.02 cheats, adapted to the local executable's offsets.
- * https://github.com/GoldHEN/GoldHEN_Cheat_Repository/blob/main/json/CUSA01623_01.02.json */
-static const Gow3CheatHook gow3_cheat_hooks[] = {
-    {0x5040e,GOW3_CHEAT_HEALTH,9,30,
-     {0xc4,0xc1,0x7a,0x11,0x85,0xcc,0x01,0,0},
-     {0x9c,0x41,0x80,0xbd,0x98,0x02,0,0,0,0x75,9,
-      0xc4,0xc1,0x7a,0x10,0x85,0xd0,0x01,0,0,0x9d,
-      0xc4,0xc1,0x7a,0x11,0x85,0xcc,0x01,0,0},
-     {"c4 c1 7a 11 85 cc 01 00 00 49 8b 45 00 4c 89 ef",0}},
-    {0x72cdc,GOW3_CHEAT_MAGIC,8,16,
-     {0xc5,0xfa,0x11,0x83,0xd0,0x01,0,0},
-     {0xc5,0xfa,0x10,0x83,0xd0,0x01,0,0,0xc5,0xfa,0x11,0x83,0xd0,0x01,0,0},
-     {"c5 fa 5f c2 c5 fa 5d c1 c5 fa 11 83 d0 01 00 00",8}},
-    {0x72d97,GOW3_CHEAT_ITEM,8,16,
-     {0xc5,0xfa,0x11,0x87,0xd4,0x01,0,0},
-     {0xc5,0xfa,0x10,0x87,0xd4,0x01,0,0,0xc5,0xfa,0x11,0x87,0xd4,0x01,0,0},
-     {"c5 fa 5f c2 c5 fa 5d c1 c5 fa 11 87 d4 01 00 00 c3",8}},
-    {0x6a9b8,GOW3_CHEAT_RAGE,8,10,
-     {0xc5,0xfa,0x11,0x8b,0xd8,0x01,0,0},
-     {0xc7,0x83,0xd8,0x01,0,0,0x28,0x6b,0x6e,0x4e},
-     {"80 8b 68 01 00 00 80 c5 fa 11 8b d8 01 00 00 c5 f8 2e e0 73 20",7}},
-    {0x6a6a0,GOW3_CHEAT_RAGE,8,10,
-     {0xc5,0xfa,0x11,0x8b,0xd8,0x01,0,0},
-     {0xc7,0x83,0xd8,0x01,0,0,0x28,0x6b,0x6e,0x4e},
-     {"c5 fa 11 8b d8 01 00 00 c5 fa 10 4d f4 c5 f8 2e c8",0}},
-    {0x6a9fc,GOW3_CHEAT_ORBS,8,10,
-     {0xc5,0xfa,0x11,0x87,0xe8,0x01,0,0},
-     {0xc7,0x87,0xe8,0x01,0,0,0xf0,0x23,0x74,0x49},
-     {"c5 fa 11 87 e8 01 00 00 48 8b 87 b0 01 00 00 a9 00 00 04 00",0}},
-    /* Override only the queried completion level, leaving stored progress untouched. */
-    {0xc77ea,GOW3_CHEAT_VERY_HARD,8,8,
-     {0xb8,3,0,0,0,0xf6,0xc1,8},
-     {0xb8,3,0,0,0,0x85,0xc0,0x90},
-     {"48 8b 08 b8 03 00 00 00 f6 c1 08 75 1b b8 02 00 00 00",3}},
-    /* Ignore the used-air-jump flag for Kratos, preserving every other movement check. */
-    {0x95d51,GOW3_CHEAT_DOUBLE_JUMPS,9,27,
-     {0x41,0xf6,0x84,0x24,0xac,4,0,0,4},
-     {0x41,0x80,0xbc,0x24,0x98,2,0,0,0,0x75,7,
-      0xa9,0,0,0,0,0xeb,9,
-      0x41,0xf6,0x84,0x24,0xac,4,0,0,4},
-     {"0f 84 ?? ?? ?? ?? 41 f6 84 24 ac 04 00 00 04 0f 85 ?? ?? ?? ??",6}}
+/* Killzone Shadow Fall CUSA00190 v01.81. GOW3_CHEAT_FREE_CAMERA is the free camera's switch
+ * (src/free_camera_hook.h): it shares the menu's cheat flags but is never saved. */
+enum { GOW3_CHEAT_GOD, GOW3_CHEAT_AMMO, GOW3_CHEAT_NO_RELOAD, GOW3_CHEAT_SPRINT, GOW3_CHEAT_ECHO,
+       GOW3_CHEAT_CHAPTERS, GOW3_CHEAT_FREE_CAMERA, GOW3_CHEAT_COUNT };
+
+/* The game keeps its developers' DebugSettings object (exported to scripts as gDebugSettings:
+ * SetGodMode, EnableInfiniteAmmo, SetSPAllUnlocked...) at a global the retail code still reads.
+ * Each reader below tests the local player first (+0xa0 set, +0xa1 clear), so the switches only
+ * change the player. The loader finds the global through the god mode reader and writes the
+ * fields; the game does the rest. Every reader must match, or no field is written. */
+typedef struct { const char *name; unsigned field, size; Gow3Signature site; } Gow3DebugCheat;
+static const Gow3DebugCheat gow3_debug_cheats[] = {
+    /* 0xa665e9 (player IsGodMode, 0xa665c0): GodMode int, 0 off, 1 on (2 adds a check of its own,
+     * 0xa66600, left unused); 0xa71037 makes the player's damage events void. */
+    {"god mode", 0x24, 4,
+     {"80 b9 a1 00 00 00 00 75 15 48 8d 05 ?? ?? ?? ?? 48 8b 80 b0 07 00 00 83 78 24 00 0f 9f c0", 9}},
+    /* 0xb4ea16 (player HasInfiniteAmmo, 0xb4e9e0): reserve ammo is not taken. */
+    {"infinite ammo", 0x28, 1,
+     {"80 b9 a1 00 00 00 00 b0 01 75 15 48 8d 05 ?? ?? ?? ?? 48 8b 80 b0 07 00 00 80 78 28 00", 11}},
+    /* 0xca5ae8 (magazine use, 0xca5a20): the magazine is not emptied, so no reload. */
+    {"no reload", 0x30, 1,
+     {"74 14 48 8d 05 ?? ?? ?? ?? 48 8b 80 b0 07 00 00 80 78 30 00 75 04 45 29 75 1c", 2}},
+    /* 0xa66679 (player unlimited stamina, 0xa66650): the sprint update (0xb38950) refills. */
+    {"unlimited sprint", 0x29, 1,
+     {"80 b9 a1 00 00 00 00 75 15 48 8d 05 ?? ?? ?? ?? 48 8b 80 b0 07 00 00 80 78 29 00 0f 95 c0", 9}},
+    /* 0x8efef9 (chapter select, 0x8efef0 / 0x8efe30 / 0x8f4050): every chapter and section
+     * counts as unlocked at every difficulty; the save's own progress is not written. */
+    {"all chapters", 0x1c, 1,
+     {"80 bf 40 fa 00 00 00 75 15 48 8d 05 ?? ?? ?? ?? 48 8b 80 b0 07 00 00 80 78 1c 00", 9}},
 };
-#define GOW3_CHEAT_HOOK_COUNT (sizeof(gow3_cheat_hooks)/sizeof(gow3_cheat_hooks[0]))
-static inline int gow3_cheat_signature_match(const Gow3CheatHook *hook,
-                                            const unsigned char *code, uint64_t size) {
-    return size >= hook->length && !memcmp(code, hook->original, hook->length);
+enum { GOW3_DEBUG_CHEAT_COUNT = sizeof(gow3_debug_cheats) / sizeof(gow3_debug_cheats[0]) };
+static const unsigned gow3_debug_cheat_ids[GOW3_DEBUG_CHEAT_COUNT] = {
+    GOW3_CHEAT_GOD, GOW3_CHEAT_AMMO, GOW3_CHEAT_NO_RELOAD, GOW3_CHEAT_SPRINT, GOW3_CHEAT_CHAPTERS};
+/* "lea rax,[global]; mov rax,[rax+0x7b0]" at the site: the image offset of the object's pointer. */
+static inline uint64_t gow3_debug_settings_slot(const unsigned char *image, uint64_t at) {
+    int32_t disp;
+    memcpy(&disp, image + at + 3, 4);
+    return at + 7 + (int64_t)disp + 0x7b0;
 }
-static inline unsigned gow3_cheat_build_stub(unsigned char *out, const Gow3CheatHook *hook,
-                                            uintptr_t flag, uintptr_t resume) {
-    /* Keep the SysV red zone, GPRs and condition flags intact; no host call on the hot path. */
-    const unsigned char prefix[] = {
-        0x48,0x8d,0x64,0x24,0x80,0x9c,0x50,0x48,0xb8,0,0,0,0,0,0,0,0,
-        0x80,0x38,0,0x74,0
-    };
-    const unsigned char restore[] = {0x58,0x9d};
-    const unsigned char stack[] = {0x48,0x8d,0xa4,0x24,0x80,0,0,0};
-    const unsigned char jump[] = {0xff,0x25,0,0,0,0};
-    unsigned n = sizeof(prefix);
-    memcpy(out, prefix, n);
-    memcpy(out + 9, &flag, 8);
-    out[21] = (unsigned char)(sizeof(restore) + hook->replacement_length + sizeof(stack) + 14);
-    memcpy(out+n,restore,sizeof(restore)); n += sizeof(restore);
-    memcpy(out+n,hook->replacement,hook->replacement_length); n += hook->replacement_length;
-    memcpy(out+n,stack,sizeof(stack)); n += sizeof(stack);
-    memcpy(out+n,jump,sizeof(jump)); n += sizeof(jump);
-    memcpy(out+n,&resume,8); n += 8;
-    memcpy(out+n,restore,sizeof(restore)); n += sizeof(restore);
-    memcpy(out+n,hook->original,hook->length); n += hook->length;
-    memcpy(out+n,stack,sizeof(stack)); n += sizeof(stack);
-    memcpy(out+n,jump,sizeof(jump)); n += sizeof(jump);
-    memcpy(out+n,&resume,8); n += 8;
-    return n;
+
+/* Continuous Tactical Echo: an int3 at "mov r14,rdi" (0xc1a860) in the SpotAndMark ability's
+ * update. State 2 is an expanding scan, 3 waits between scans; keeping two pulses queued and the
+ * scan's own input flag held stops it expiring. Idle, cooldown and scripted cancels stay the
+ * game's. The player must use Tactical Echo once after loading. */
+enum { GOW3_ECHO_LENGTH = 3 };
+static const Gow3Signature gow3_echo_site = {
+    "49 89 f7 49 89 fe 48 8b 05 ?? ?? ?? ?? 48 8b 00 48 89 45 e0 e8 ?? ?? ?? ?? 49 8b 9e e0 01 00 00", 3};
+
+typedef int (*Gow3CheatRead)(uintptr_t address, void *out, size_t size);
+typedef int (*Gow3CheatWrite)(uintptr_t address, const void *in, size_t size);
+/* Entity_ExportedIsPlayer (0x65dac0) dispatches vtable+0x140; these are its 01.81 cases, read
+ * without calling guest code. Unknown implementations and unreadable pointers are not the player. */
+static inline int gow3_player_entity(uintptr_t entity, uintptr_t base, Gow3CheatRead read, unsigned depth) {
+    uintptr_t vtable, method, controller = 0;
+    unsigned char flag = 0;
+    if (!entity || depth >= 4 || !read(entity, &vtable, 8) || !read(vtable + 0x140, &method, 8)) return 0;
+    if (method == base + 0xa7ab20) {
+        if (!read(entity + 0x282, &flag, 1)) return 0;
+        if (flag) return 1;
+        if (!read(vtable + 0x138, &method, 8) || method != base + 0xb67220) return 0;
+        return read(entity + 0x948, &controller, 8) && controller != 0;
+    }
+    const size_t user = method == base + 0xa74980 ? 0x598 : method == base + 0xadb8f0 ? 0x580 : 0;
+    if (!user || !read(entity + user, &controller, 8) || controller < 0x48) return 0;
+    return gow3_player_entity(controller - 0x48, base, read, depth + 1);
+}
+static inline int gow3_echo_continue(uintptr_t ability, uintptr_t base, Gow3CheatRead read, Gow3CheatWrite write) {
+    uintptr_t owner = 0;
+    int state = 0, count = 0;
+    const unsigned char held = 1;
+    if (!ability || ability > UINTPTR_MAX - 0x2c7 || !read(ability + 0x1e0, &owner, 8) ||
+        !gow3_player_entity(owner, base, read, 0) || !read(ability + 0x2b8, &state, 4) ||
+        (state != 2 && state != 3) || !read(ability + 0x2c0, &count, 4) || count < 0 || count > 10000)
+        return 0;
+    if (count < 2) {
+        count = 2;
+        if (!write(ability + 0x2c0, &count, 4)) return 0;
+    }
+    return write(ability + 0x2c6, &held, 1);
 }
 #endif

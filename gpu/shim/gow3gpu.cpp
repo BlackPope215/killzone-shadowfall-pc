@@ -399,6 +399,10 @@ extern "C" void gow3gpu_camera_shake_register(int* cell) {
     Gow3Overlay::SetShakeCell(cell);
 }
 
+extern "C" void gow3gpu_scene_size_register(uint32_t* cell) {
+    Gow3Overlay::SetSceneSizeCell(cell);
+}
+
 extern "C" int gow3gpu_overlay_captures_input(void) {
     return Gow3Overlay::CapturesInput() ? 1 : 0;
 }

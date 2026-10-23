@@ -2,6 +2,7 @@
 #include "gow3_overlay.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cfloat>
 #include <chrono>
@@ -76,6 +77,9 @@ std::atomic<bool> quick_open{false};
 std::atomic<float*> fov_cell{nullptr};
 // The camera shake hook's int (src/probe.c), kept equal to the setting; null without the hook.
 std::atomic<int*> shake_cell{nullptr};
+// The upscaler quality modes' scene size (src/scene_res_hook.h Gow3SceneSize: requested width and
+// height, then the applied ones); null when the game started with the native scene size.
+std::atomic<uint32_t*> scene_size_cell{nullptr};
 // Startup reminder of the quick menu: shown for a few seconds once the game runs.
 std::chrono::steady_clock::time_point hint_start{};
 std::atomic<bool> hint_done{false};
@@ -348,30 +352,8 @@ constexpr const char* Unsupported = "Unavailable: game version or code signature
 
 void GameTab() {
     auto& s = Gow3Settings::Get();
-    // gow3: God of War III's cheats, multipliers and enemy bar are hidden in games where none of
-    // their code signatures matched (Killzone Shadow Fall).
-    if (s.cheats_supported.load() != 0) {
-    ImGui::SeparatorText("Cheats");
-    if (BeginRows("##cheats")) {
-        static const char* const names[] = {"Infinite health", "Infinite magic", "Infinite item meter",
-                                            "Infinite Rage of Sparta", "Max red orbs",
-                                            "Unlock Very Hard", "Infinite Double Jumps"};
-        static const char* const helps[] = {
-            "Health stays full. Only Kratos is protected. Turning it off does not undo past refills.",
-            "Magic stays full.", "The item meter (bow, Helios' head, boots) stays full.",
-            "Rage of Sparta stays full.", "Red orbs stay at the maximum.",
-            "Enable before opening New Game. Does not change an existing save difficulty.",
-            "Repeat air jumps without landing. Turn off for normal movement."};
-        for (unsigned cheat = 0; cheat < GOW3_CHEAT_COUNT; ++cheat) {
-            const bool available = (s.cheats_supported.load() & (1u << cheat)) != 0;
-            ImGui::BeginDisabled(!available);
-            CheckRow(names[cheat], s.cheats[cheat], available ? helps[cheat] : Unsupported);
-            ImGui::EndDisabled();
-        }
-        ImGui::EndTable();
-    }
-    }
-
+    // gow3: God of War III's multipliers and enemy bar are hidden in games where none of their code
+    // signatures matched (Killzone Shadow Fall, whose cheats have a tab of their own).
     ImGui::SeparatorText("Controller");
     if (BeginRows("##controller")) {
         SliderRow("Vibration", s.vibration, 0, 100, "%d%%",
@@ -393,7 +375,7 @@ void GameTab() {
     }
     Help("Every multiplier back to 1x (the game's normal values).");
     if (BeginRows("##multipliers")) {
-        const bool max_orbs = (s.cheats_supported.load() & (1u << 4)) && s.cheats[4].load();
+        const bool max_orbs = false;
         ImGui::BeginDisabled(!s.red_orbs_supported.load() || max_orbs);
         MultiplierRow("Red orbs", s.red_orb_multiplier,
                       !s.red_orbs_supported.load() ? Unsupported
@@ -442,8 +424,40 @@ void FloatSliderRow(const char* label, std::atomic<float>& value, float lo, floa
 // holds the controls the launcher also sets; all apply at once.
 bool KillzoneMenu() {
     const auto& s = Gow3Settings::Get();
-    return !s.cheats_supported.load() && !s.red_orbs_supported.load() && !s.orb_pickup_supported.load() &&
+    return !s.red_orbs_supported.load() && !s.orb_pickup_supported.load() &&
            !s.damage_supported.load() && !s.actor_watch_supported.load();
+}
+
+// Killzone's cheats (src/cheat_hook.h): the game's own debug switches, which only change the player,
+// and the free camera (src/free_camera_hook.h). All apply at once.
+void CheatsTab() {
+    auto& s = Gow3Settings::Get();
+    const auto row = [&](unsigned cheat, const char* label, const char* help) {
+        const bool available = (s.cheats_supported.load() & (1u << cheat)) != 0;
+        ImGui::BeginDisabled(!available);
+        CheckRow(label, s.cheats[cheat], available ? help : Unsupported);
+        ImGui::EndDisabled();
+    };
+    ImGui::SeparatorText("Cheats");
+    if (BeginRows("##cheats")) {
+        row(GOW3_CHEAT_GOD, "God mode", "The player takes no damage. Enemies and allies are unchanged.");
+        row(GOW3_CHEAT_AMMO, "Infinite ammo", "Your reserve ammo and grenades are never used up.");
+        row(GOW3_CHEAT_NO_RELOAD, "No reload", "The magazine never empties, so weapons never reload.");
+        row(GOW3_CHEAT_SPRINT, "Unlimited sprint", "Stamina refills while you sprint.");
+        row(GOW3_CHEAT_ECHO, "Continuous Tactical Echo",
+            "An OWL scan keeps pulsing. Use the Tactical Echo once after each load; cooldowns stay.");
+        ImGui::EndTable();
+    }
+    ImGui::SeparatorText("Debug");
+    if (BeginRows("##debug")) {
+        row(GOW3_CHEAT_CHAPTERS, "Unlock all chapters",
+            "Every chapter and section in Chapter Select, at any difficulty. Your save's progress is unchanged.");
+        row(GOW3_CHEAT_FREE_CAMERA, "Free camera",
+            "F9 toggles, F10 returns to the player. WASD move, Q / E down / up, mouse or arrows look, "
+            "Shift faster, Ctrl slower. Gamepad: sticks, L1 / R1 down / up, R2 faster, L2 slower. "
+            "The player stands still meanwhile.");
+        ImGui::EndTable();
+    }
 }
 
 void ControlsTab() {
@@ -509,6 +523,57 @@ void ControlsTab() {
     ImGui::TextDisabled("Keys can be changed in the launcher (Controls).");
 }
 
+// Upscaler quality modes: the scene size of a mode at the output the launcher started FSR / DLSS
+// at (GOW3_OUTPUT_RES), as the launcher's table.
+Gow3Settings::SceneSize QualitySceneSize(int quality) {
+    static const std::array<int, 2> output = [] {
+        int w = 1920, h = 1080;
+        if (const char* env = std::getenv("GOW3_OUTPUT_RES")) std::sscanf(env, "%dx%d", &w, &h);
+        return std::array<int, 2>{w, h};
+    }();
+    return Gow3Settings::UpscaleSceneSize(quality, output[0], output[1]);
+}
+
+bool ReducedScene(Gow3Settings::SceneSize size) {
+    return size.width < 1920 || size.height < 1080;
+}
+
+// A reduced scene size switches live once the game started with one (the cell exists); Native
+// and a first reduced size need the launcher (GOW3_RENDER_RES), so a restart.
+bool QualityNeedsRestart() {
+    const auto& s = Gow3Settings::Get();
+    const auto size = QualitySceneSize(s.upscale_quality);
+    const auto startup = QualitySceneSize(s.startup_upscale_quality);
+    const bool same = size.width == startup.width && size.height == startup.height;
+    return !same && !(scene_size_cell.load() && ReducedScene(size));
+}
+
+void QualityRow() {
+    auto& s = Gow3Settings::Get();
+    static const std::array<std::string, Gow3Settings::UpscaleQualityCount> names = [] {
+        static const char* const base[] = {"Native", "Quality", "Balanced", "Performance", "Ultra performance"};
+        std::array<std::string, Gow3Settings::UpscaleQualityCount> out;
+        for (int q = 0; q < Gow3Settings::UpscaleQualityCount; ++q) {
+            const auto size = QualitySceneSize(q);
+            out[q] = std::string(base[q]) + " (" + std::to_string(size.width) + "x" + std::to_string(size.height) + ")";
+        }
+        return out;
+    }();
+    static const std::array<const char*, Gow3Settings::UpscaleQualityCount> labels = [] {
+        std::array<const char*, Gow3Settings::UpscaleQualityCount> out;
+        for (int q = 0; q < Gow3Settings::UpscaleQualityCount; ++q) out[q] = names[q].c_str();
+        return out;
+    }();
+    ChoiceRow("Upscaling quality", s.upscale_quality, labels.data(), nullptr, Gow3Settings::UpscaleQualityCount,
+              scene_size_cell.load()
+                  ? "The 3D scene drawn smaller, rebuilt by FSR / DLSS: more FPS when the graphics card is "
+                    "the limit, a softer image. Between the reduced modes it switches at once; Native "
+                    "needs a restart."
+                  : "The 3D scene drawn smaller, rebuilt by FSR / DLSS: more FPS when the graphics card is "
+                    "the limit, a softer image. Applied on restart (this launch started at Native); "
+                    "after that the reduced modes switch at once.");
+}
+
 // Killzone: upscaler and frame generation. Inside an upscaler session (the launcher started the
 // game through FSR / DLSS) both switch live; frame generation turned on from off needs a restart
 // (the swapchain is made for it). The launcher adopts the choice (upscaling_from_menu).
@@ -525,15 +590,30 @@ void UpscalingSection() {
         return;
     }
     if (session) {
+        // FSR 4 (v07 INT8 model) when the card runs it; its shaders come from the launcher download
+        // (fsr4_shaders) and a missing file falls back to FSR 3.1 (fsr4_problem says why).
         const bool dlss = s.dlss_supported.load();
-        const char* const labels[] = {"FSR 3.1", "DLSS"};
-        const int values[] = {Gow3Settings::UpscalerFsr3, Gow3Settings::UpscalerDlss};
+        const char* labels[3] = {"FSR 3.1"};
+        int values[3] = {Gow3Settings::UpscalerFsr3};
+        int count = 1;
+        if (s.fsr4_supported.load()) {
+            labels[count] = "FSR 4";
+            values[count++] = Gow3Settings::UpscalerFsr4;
+        }
+        if (dlss) {
+            labels[count] = "DLSS";
+            values[count++] = Gow3Settings::UpscalerDlss;
+        }
         const int before = s.upscaler;
-        ChoiceRow("Upscaler", s.upscaler, labels, values, dlss ? 2 : 1,
+        ChoiceRow("Upscaler", s.upscaler, labels, values, count,
                   dlss ? "Switches at once." : "DLSS needs an NVIDIA RTX card and its files.");
         if (s.upscaler != before) {
             s.upscaling_from_menu = true;
         }
+        if (const char* problem = s.fsr4_problem.load()) {
+            InfoRow("", problem);
+        }
+        QualityRow();
     } else {
         InfoRow("Upscaler", "Off (1080p): choose FSR or DLSS in the launcher");
     }
@@ -688,7 +768,10 @@ void PerformanceTab() {
             int w = 0, h = 0, sw = 0, sh = 0;
             std::sscanf(port_output ? port_output : "1920x1080", "%dx%d", &w, &h);
             if (scene_size && std::sscanf(scene_size, "%dx%d", &sw, &sh) == 2) {
-                std::snprintf(text, sizeof(text), "%d x %d scene, %d x %d output (launcher)", sw, sh, w, h);
+                // The size the upscaler gets now (the quality mode can change it live).
+                sw = s.active_render_width.load();
+                sh = s.active_render_height.load();
+                std::snprintf(text, sizeof(text), "%d x %d scene, %d x %d output (quality mode)", sw, sh, w, h);
             } else {
                 std::snprintf(text, sizeof(text), "%d x %d (port; change it in the launcher)", w, h);
             }
@@ -795,7 +878,7 @@ int RestartChanges() {
            (s.deferred_readback != s.startup_deferred_readback) + (s.stale_readback != s.startup_stale_readback) +
            (s.anisotropy != s.startup_anisotropy) + (s.motion_blur != s.startup_motion_blur) +
            (s.depth_of_field != s.startup_depth_of_field) + (s.bloom != s.startup_bloom) +
-           (s.film_grain != s.startup_film_grain) +
+           (s.film_grain != s.startup_film_grain) + QualityNeedsRestart() +
            // Frame generation turned on in a launch that started without it (UpscalingSection).
            (s.startup_frame_gen == Gow3Settings::FrameGenOff && s.frame_gen != Gow3Settings::FrameGenOff);
 }
@@ -909,7 +992,7 @@ void Menu() {
         return;
     }
     footer_help = nullptr;
-    constexpr int TabCount = 4;
+    const int TabCount = KillzoneMenu() ? 5 : 4;
     const ImGuiIO& io = ImGui::GetIO();
     if (!io.WantTextInput) {
         const int step = ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_E, false) ? 1
@@ -922,8 +1005,8 @@ void Menu() {
     }
     const float footer = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() * 2.0f;
     if (ImGui::BeginTabBar("##tabs")) {
-        static const char* const tabs[TabCount] = {KillzoneMenu() ? "Controls" : "Game", "Image", "Performance",
-                                                   "Overlay"};
+        const char* const tabs[] = {KillzoneMenu() ? "Controls" : "Game", "Image", "Performance", "Overlay",
+                                    "Cheats"};
         for (int tab = 0; tab < TabCount; ++tab) {
             const ImGuiTabItemFlags flags = requested_tab == tab ? ImGuiTabItemFlags_SetSelected : 0;
             if (!ImGui::BeginTabItem(tabs[tab], nullptr, flags)) {
@@ -944,7 +1027,8 @@ void Menu() {
                     break;
                 case 1: ImageTab(); break;
                 case 2: PerformanceTab(); break;
-                default: OverlayTab(); break;
+                case 3: OverlayTab(); break;
+                default: CheatsTab(); break;
                 }
             }
             ImGui::EndChild();
@@ -1245,6 +1329,36 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     style.FrameRounding = 4.0f;
     style.GrabRounding = 4.0f;
     style.Colors[ImGuiCol_WindowBg].w = 0.92f;
+    // Killzone port: green accents instead of the dark theme's blue (the other ports keep it).
+    const auto green = [](float alpha) { return ImVec4(0.30f, 0.78f, 0.38f, alpha); };
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.30f, 0.16f, 0.54f);
+    colors[ImGuiCol_FrameBgHovered] = green(0.40f);
+    colors[ImGuiCol_FrameBgActive] = green(0.67f);
+    colors[ImGuiCol_TitleBgActive] = ImVec4(0.10f, 0.28f, 0.14f, 1.0f);
+    colors[ImGuiCol_CheckMark] = green(1.0f);
+    colors[ImGuiCol_SliderGrab] = ImVec4(0.24f, 0.66f, 0.32f, 1.0f);
+    colors[ImGuiCol_SliderGrabActive] = green(1.0f);
+    colors[ImGuiCol_Button] = green(0.40f);
+    colors[ImGuiCol_ButtonHovered] = green(1.0f);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.12f, 0.62f, 0.24f, 1.0f);
+    colors[ImGuiCol_Header] = green(0.31f);
+    colors[ImGuiCol_HeaderHovered] = green(0.80f);
+    colors[ImGuiCol_HeaderActive] = green(1.0f);
+    colors[ImGuiCol_SeparatorHovered] = ImVec4(0.12f, 0.50f, 0.20f, 0.78f);
+    colors[ImGuiCol_SeparatorActive] = ImVec4(0.12f, 0.50f, 0.20f, 1.0f);
+    colors[ImGuiCol_ResizeGrip] = green(0.20f);
+    colors[ImGuiCol_ResizeGripHovered] = green(0.67f);
+    colors[ImGuiCol_ResizeGripActive] = green(0.95f);
+    colors[ImGuiCol_Tab] = ImVec4(0.13f, 0.34f, 0.18f, 0.86f);
+    colors[ImGuiCol_TabHovered] = green(0.80f);
+    colors[ImGuiCol_TabSelected] = ImVec4(0.18f, 0.48f, 0.24f, 1.0f);
+    colors[ImGuiCol_TabSelectedOverline] = green(1.0f);
+    colors[ImGuiCol_TabDimmed] = ImVec4(0.07f, 0.15f, 0.09f, 0.97f);
+    colors[ImGuiCol_TabDimmedSelected] = ImVec4(0.12f, 0.30f, 0.16f, 1.0f);
+    colors[ImGuiCol_TextSelectedBg] = green(0.35f);
+    colors[ImGuiCol_NavCursor] = green(1.0f);
+    colors[ImGuiCol_TextLink] = green(1.0f);
 
     ImFontConfig font_config;
     font_config.FontDataOwnedByAtlas = false;
@@ -1564,6 +1678,10 @@ void SetShakeCell(int* cell) {
     shake_cell = cell;
 }
 
+void SetSceneSizeCell(uint32_t* cell) {
+    scene_size_cell = cell;
+}
+
 void BeginChoice(const std::string& title, const std::vector<std::string>& items,
                  std::vector<Gow3Png::Image> pictures, int focus) {
     std::scoped_lock lock{imgui_mutex};
@@ -1617,6 +1735,19 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     if (int* cell = shake_cell.load()) {
         *cell = Gow3Settings::Get().camera_shake.load() ? 1 : 0;
+    }
+    // Quality mode: a reduced size is requested in one store; the game's next frame makes the
+    // scene targets again (src/scene_res_hook.h). Native waits for a restart.
+    if (uint32_t* cell = scene_size_cell.load()) {
+        auto& s = Gow3Settings::Get();
+        const auto size = QualitySceneSize(s.upscale_quality.load());
+        if (ReducedScene(size)) {
+            const uint64_t packed = uint64_t(uint32_t(size.width)) | uint64_t(uint32_t(size.height)) << 32;
+            __atomic_store_n(reinterpret_cast<uint64_t*>(cell), packed, __ATOMIC_RELAXED);
+        }
+        const uint64_t applied = __atomic_load_n(reinterpret_cast<uint64_t*>(cell + 2), __ATOMIC_RELAXED);
+        s.scene_applied_width = int(uint32_t(applied));
+        s.scene_applied_height = int(uint32_t(applied >> 32));
     }
     if (!Visible()) {
         return;

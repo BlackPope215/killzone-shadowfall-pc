@@ -309,8 +309,8 @@ bool TemporalUpscaler::OnFrameStart() {
         failed = false;
         fsr4_failed = false;
     }
-    const bool changed = output_changed || applied_preset != preset || active != last_active ||
-                         jitter_on != last_jitter || applied_upscaler != upscaler;
+    bool changed = output_changed || applied_preset != preset || active != last_active ||
+                   jitter_on != last_jitter || applied_upscaler != upscaler;
     if (applied_upscaler != upscaler) {
         // A failed provider keeps a fatal flag internally; a user retry gets a fresh context.
         scheduler.Finish();
@@ -334,6 +334,25 @@ bool TemporalUpscaler::OnFrameStart() {
                                                         {target_width, target_height}));
         render_width = scene_targets.Size().width;
         render_height = scene_targets.Size().height;
+    }
+    // Killzone quality modes switch live (src/scene_res_hook.h): once the game has made its scene
+    // targets at the new size and its camera renders at it, the scene, FSR / DLSS and the jitter
+    // follow. Other passes at other sizes (a 960x540 one) never match the applied size.
+    if (scaled_session) {
+        const auto size = camera_motion.RenderSize();
+        const u32 applied_w = u32(std::max(settings.scene_applied_width.load(), 0));
+        const u32 applied_h = u32(std::max(settings.scene_applied_height.load(), 0));
+        if (size[0] == applied_w && size[1] == applied_h && applied_w && applied_h &&
+            (applied_w != render_width || applied_h != render_height)) {
+            std::printf("Upscaler: scene %ux%u (quality mode changed)\n", applied_w, applied_h);
+            render_width = applied_w;
+            render_height = applied_h;
+            changed = true; // history restarts, the context follows the new render size
+            // FSR 4 starts again too, as after a menu change of upscaler: kept, its context showed
+            // the new size shaking (registrations and history of the previous size).
+            scheduler.Finish();
+            fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
+        }
     }
     Gow3Settings::Get().active_render_width = Scaled() ? render_width : scene_targets.Size().width;
     Gow3Settings::Get().active_render_height = Scaled() ? render_height : scene_targets.Size().height;
@@ -2160,7 +2179,14 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         .output = {vk::Image(output_image), *output_view, ow, oh},
         .render_width = w,
         .render_height = h,
-        .preset = applied_preset,
+        // Killzone sessions keep the startup preset while the quality mode changes the scene size
+        // live: the FSR 4 model follows the actual scale (1x native AA, 1.5x quality, 1.7x
+        // balanced, 2x performance, 3x ultra performance).
+        .preset = !scaled_session ? applied_preset
+                  : [&] {
+                        const float scale = float(oh) / float(std::max(h, 1u));
+                        return scale < 1.2f ? 0 : scale < 1.6f ? 1 : scale < 1.85f ? 2 : scale < 2.5f ? 3 : 4;
+                    }(),
         .jitter = {sign * jitter[0], sign * jitter[1]},
         .frame_ms = frame_ms,
         .near_plane = camera_motion.Near(),

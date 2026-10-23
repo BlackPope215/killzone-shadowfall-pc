@@ -1244,9 +1244,9 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
 
     // gow3: screen-space (clip disabled) draws into the upscaler's output-size images.
     push_data.xscale *= target_scale[0];
-    push_data.xoffset *= target_scale[0];
+    push_data.xoffset = push_data.xoffset * target_scale[0] + target_offset[0];
     push_data.yscale *= target_scale[1];
-    push_data.yoffset *= target_scale[1];
+    push_data.yoffset = push_data.yoffset * target_scale[1] + target_offset[1];
     if (motion_draw && motion_geometry) {
         const auto& vs = pipeline->GetStage(Shader::SwStage::Vertex);
         const auto [base_vertex, first_instance] =
@@ -1468,9 +1468,9 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
 
     // gow3: screen-space (clip disabled) draws into the upscaler's output-size images.
     push_data.xscale *= target_scale[0];
-    push_data.xoffset *= target_scale[0];
+    push_data.xoffset = push_data.xoffset * target_scale[0] + target_offset[0];
     push_data.yscale *= target_scale[1];
-    push_data.yoffset *= target_scale[1];
+    push_data.yoffset = push_data.yoffset * target_scale[1] + target_offset[1];
     pipeline->BindResources(set_writes, push_data);
     draw_jitter = {};
     if (upscaler->Enabled() && camera_motion->SceneDepth(db_desc.first)) {
@@ -3005,6 +3005,7 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
             attachment_feedback_loop = false;
             push_data.scene_size = begin_memo.scene_size;
             target_scale = begin_memo.target_scale;
+            target_offset = begin_memo.target_offset;
             return begin_memo.state;
         }
         ++begin_memo_misses;
@@ -3021,7 +3022,7 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         if (!clears) {
             // Recomputed after the full path: it may have started the scene (scene_started).
             begin_memo = {true, MakeBeginSignature(pipeline), state, push_data.scene_size,
-                          target_scale};
+                          target_scale, target_offset};
         }
     }
     return state;
@@ -3337,6 +3338,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     // gow3: a pass drawn into the upscaler's output-size images (UI, display pass): every
     // attachment must be redirected, viewports and scissors are scaled.
     target_scale = {1.0f, 1.0f};
+    target_offset = {0.0f, 0.0f};
     if (color_redirected || depth_redirected) {
         u32 color_targets = 0;
         for (u32 cb = 0; cb < state.num_color_attachments; ++cb) {
@@ -3383,9 +3385,11 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
                 (UiComposition::NativeViewport(viewport.xscale * 2, viewport.yscale * 2) ||
                  (regs.IsClipDisabled() && !regs.viewport_control.xscale_enable &&
                   !regs.viewport_control.yscale_enable));
-            target_scale = UiComposition::Scale(guest_extent.first, guest_extent.second,
-                                                redirect.width, redirect.height,
-                                                native_coordinates);
+            // Outputs other than 16:9 (ultrawide): native-coordinate UI in a centred 16:9 area.
+            const auto fit = UiComposition::Fit(guest_extent.first, guest_extent.second,
+                                                redirect.width, redirect.height, native_coordinates);
+            target_scale = {fit[0], fit[1]};
+            target_offset = {fit[2], fit[3]};
             // GOW3_UI_DEBUG=N: the first N redirected passes (UI composition diagnosis).
             static int ui_debug = [] {
                 const char* v = std::getenv("GOW3_UI_DEBUG");
@@ -3744,8 +3748,8 @@ void Rasterizer::UpdateViewportScissorState() const {
 
             // gow3: sub-pixel jitter of scene geometry for the temporal upscaler; the same
             // shift as jittering the projection.
-            viewport.x = (xoffset - xscale) * target_scale[0] + draw_jitter[0];
-            viewport.y = (yoffset - yscale) * target_scale[1] + draw_jitter[1];
+            viewport.x = (xoffset - xscale) * target_scale[0] + target_offset[0] + draw_jitter[0];
+            viewport.y = (yoffset - yscale) * target_scale[1] + target_offset[1] + draw_jitter[1];
             viewport.width = xscale * 2.0f * target_scale[0];
             viewport.height = yscale * 2.0f * target_scale[1];
         }
@@ -3763,12 +3767,13 @@ void Rasterizer::UpdateViewportScissorState() const {
             vp_scsr.bottom_right_y = std::min(AmdGpu::Scissor::Clamp(vp_scsr.bottom_right_y),
                                               regs.viewport_scissors[i].bottom_right_y);
         }
-        if (target_scale[0] != 1.0f || target_scale[1] != 1.0f) {
-            const auto scale = [](s32 v, float f) { return s32(std::lround(float(v) * f)); };
-            const s32 x0 = scale(vp_scsr.top_left_x, target_scale[0]);
-            const s32 y0 = scale(vp_scsr.top_left_y, target_scale[1]);
-            const s32 x1 = scale(vp_scsr.top_left_x + s32(vp_scsr.GetWidth()), target_scale[0]);
-            const s32 y1 = scale(vp_scsr.top_left_y + s32(vp_scsr.GetHeight()), target_scale[1]);
+        if (target_scale[0] != 1.0f || target_scale[1] != 1.0f || target_offset[0] != 0.0f ||
+            target_offset[1] != 0.0f) {
+            const auto scale = [](s32 v, float f, float o) { return s32(std::lround(float(v) * f + o)); };
+            const s32 x0 = scale(vp_scsr.top_left_x, target_scale[0], target_offset[0]);
+            const s32 y0 = scale(vp_scsr.top_left_y, target_scale[1], target_offset[1]);
+            const s32 x1 = scale(vp_scsr.top_left_x + s32(vp_scsr.GetWidth()), target_scale[0], target_offset[0]);
+            const s32 y1 = scale(vp_scsr.top_left_y + s32(vp_scsr.GetHeight()), target_scale[1], target_offset[1]);
             scissors.push_back({
                 .offset = {x0, y0},
                 .extent = {u32(std::max(x1 - x0, 0)), u32(std::max(y1 - y0, 0))},

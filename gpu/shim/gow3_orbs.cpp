@@ -8,11 +8,6 @@
 extern "C" float __attribute__((sysv_abi)) gow3_orbs_gain(void* player, float requested) {
     float balance;
     std::memcpy(&balance, static_cast<unsigned char*>(player) + 0x1e8, sizeof(balance));
-    const auto& settings = Gow3Settings::Get();
-    if ((settings.cheats_supported.load() & (1u << GOW3_CHEAT_ORBS)) &&
-        settings.cheats[GOW3_CHEAT_ORBS].load()) {
-        return requested;
-    }
     return Gow3Orbs::Scale(balance, requested, Gow3Settings::Get().red_orb_multiplier.load());
 }
 

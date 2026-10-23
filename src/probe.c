@@ -17,7 +17,9 @@
 #include "damage_hook.h"
 #include "postfx_hook.h"
 #include "scene_res_hook.h"
+#include "ultrawide_hook.h"
 #include "prompt_hook.h"
+#include "free_camera_hook.h"
 #include "gpu/gow3gpu.h"
 #if !defined(__x86_64__) || !defined(__GNUC__)
 #error This prototype requires x86-64 GCC or Clang (including MinGW).
@@ -123,6 +125,27 @@ __asm__(".text\n.globl enter_on_stack\nenter_on_stack:\n"
 #endif
 static ABI void guest_exit(void) { puts("Runtime: process finalizer callback reached"); }
 #ifdef _WIN32
+/* Cheats (src/cheat_hook.h): the menu's switches (one byte each, gow3_cheat_flag) and guest
+ * memory reads and writes that fail instead of faulting. */
+static volatile uint8_t *cheat_flags[GOW3_CHEAT_COUNT];
+static uint64_t echo_site=UINT64_MAX;
+static int cheat_on(unsigned id) { return cheat_flags[id] && *cheat_flags[id]; }
+static int cheat_read(uintptr_t address, void *out, size_t size) {
+    SIZE_T got=0;
+    return ReadProcessMemory(GetCurrentProcess(),(const void *)address,out,size,&got) && got==size;
+}
+static int cheat_write(uintptr_t address, const void *in, size_t size) {
+    SIZE_T done=0;
+    return WriteProcessMemory(GetCurrentProcess(),(void *)address,in,size,&done) && done==size;
+}
+/* The Tactical Echo int3: keeps an active scan going, then replays "mov r14,rdi". */
+static int echo_trap(CONTEXT *c, const void *address) {
+    if (echo_site==UINT64_MAX || address!=image+echo_site) return 0;
+    if (cheat_on(GOW3_CHEAT_ECHO)) gow3_echo_continue(c->Rdi,(uintptr_t)image,cheat_read,cheat_write);
+    c->R14=c->Rdi;
+    c->Rip=(uintptr_t)image+echo_site+GOW3_ECHO_LENGTH;
+    return 1;
+}
 static void describe_address(char *out, size_t size, uintptr_t address) {
     HMODULE module=NULL;
     char name[MAX_PATH]="?";
@@ -216,6 +239,8 @@ static void isa_context_regs(CONTEXT *c, IsaRegs *regs, int to_context) {
 static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
     const EXCEPTION_RECORD *record=info->ExceptionRecord;
     DWORD code=record->ExceptionCode;
+    if (code==EXCEPTION_BREAKPOINT && echo_trap(info->ContextRecord,record->ExceptionAddress))
+        return EXCEPTION_CONTINUE_EXECUTION;
     if (code==EXCEPTION_BREAKPOINT && isa_table) {
         /* An int3 ISA site: emulated here; any other breakpoint goes on to the report below. */
         IsaRegs regs;
@@ -433,53 +458,75 @@ extern ABI void gow3_mouse_look_limits(float *limits);
 extern int gow3_mouse_direct_wanted(void);
 extern void gow3_mouse_direct_status(int ready);
 
+#ifdef _WIN32
+/* The DebugSettings switches (src/cheat_hook.h): every 100 ms the menu's choices are written into
+ * the game's object (it exists once the game has started); a switch turned off is cleared once,
+ * so nothing else the game keeps there is touched. */
+static uint64_t debug_settings_slot;
+static unsigned debug_cheats_ready;
+static DWORD WINAPI debug_cheats_thread(void *unused) {
+    (void)unused;
+    unsigned written=0;
+    for (;;) {
+        Sleep(100);
+        uintptr_t object=0, vtable=0;
+        if (!cheat_read((uintptr_t)image+debug_settings_slot,&object,8) || !object ||
+            !cheat_read(object,&vtable,8) || vtable-(uintptr_t)image>0x20000000) continue;
+        for (unsigned i=0;i<GOW3_DEBUG_CHEAT_COUNT;++i) {
+            if (!(debug_cheats_ready & (1u<<i))) continue;
+            const Gow3DebugCheat *cheat=&gow3_debug_cheats[i];
+            const int on=cheat_on(gow3_debug_cheat_ids[i]);
+            if (!on && !(written & (1u<<i))) continue;
+            const uint32_t value=on ? 1 : 0;
+            uint32_t now=0;
+            if (cheat_read(object+cheat->field,&now,cheat->size) && now!=value)
+                cheat_write(object+cheat->field,&value,cheat->size);
+            written=on ? written|(1u<<i) : written&~(1u<<i);
+        }
+    }
+    return 0;
+}
+#endif
+
 /* The hooks below find their sites by signature (src/signature.h), so they work in any region
  * and version of the game whose code matches; a site that is not found leaves its feature off. */
 static void install_cheats(Segment *segments, uint64_t count, uint64_t size) {
-    const char *names[] = {"health", "magic", "item meter", "Rage of Sparta", "red orbs",
-                           "Very Hard unlock", "infinite double jumps"};
-    uint64_t at[GOW3_CHEAT_HOOK_COUNT];
-    for (unsigned i = 0; i < GOW3_CHEAT_HOOK_COUNT; ++i)
-        at[i] = gow3_signature_find(image, size, &gow3_cheat_hooks[i].site);
-    for (unsigned id = 0; id < GOW3_CHEAT_COUNT; ++id) {
-        int valid = 1;
-        for (unsigned i = 0; i < GOW3_CHEAT_HOOK_COUNT; ++i) {
-            const Gow3CheatHook *hook = &gow3_cheat_hooks[i];
-            if (hook->id != id) continue;
-            if (at[i] == UINT64_MAX || !mapped(segments, count, at[i], hook->length) ||
-                !gow3_cheat_signature_match(hook, image + at[i], size - at[i])) valid = 0;
-        }
-        if (!valid) {
-            printf("Cheats: %s unavailable (code not found in this eboot.bin)\n", names[id]);
+#ifdef _WIN32
+    for (unsigned id = 0; id < GOW3_CHEAT_COUNT; ++id) cheat_flags[id] = (volatile uint8_t *)gow3_cheat_flag(id);
+    uint64_t slot = UINT64_MAX;
+    for (unsigned i = 0; i < GOW3_DEBUG_CHEAT_COUNT; ++i) {
+        const Gow3DebugCheat *cheat = &gow3_debug_cheats[i];
+        const uint64_t at = gow3_signature_find(image, size, &cheat->site);
+        const uint64_t found = at == UINT64_MAX || !mapped(segments, count, at, 14) ? UINT64_MAX
+                               : gow3_debug_settings_slot(image, at);
+        if (found == UINT64_MAX || (slot != UINT64_MAX && found != slot) || found + 8 > size ||
+            !mapped(segments, count, found, 8)) {
+            printf("Cheats: %s unavailable (code not found in this eboot.bin)\n", cheat->name);
             continue;
         }
-        unsigned char *stubs = hook_page();
-        int32_t relative[GOW3_CHEAT_HOOK_COUNT] = {0};
-        for (unsigned i = 0; i < GOW3_CHEAT_HOOK_COUNT; ++i) {
-            const Gow3CheatHook *hook = &gow3_cheat_hooks[i];
-            if (hook->id != id) continue;
-            unsigned char *stub = stubs + i * 256;
-            int64_t delta = (int64_t)(uintptr_t)stub - (int64_t)(uintptr_t)(image + at[i] + 5);
-            if (delta < INT32_MIN || delta > INT32_MAX) { valid = 0; break; }
-            relative[i] = (int32_t)delta;
-            gow3_cheat_build_stub(stub, hook, gow3_cheat_flag(id),
-                                 (uintptr_t)(image + at[i] + hook->length));
-        }
-        if (!valid) {
-            printf("Cheats: %s unavailable (hook outside relative-jump range)\n", names[id]);
-            continue;
-        }
-        protect(stubs, page_size, 5);
-        for (unsigned i = 0; i < GOW3_CHEAT_HOOK_COUNT; ++i) {
-            const Gow3CheatHook *hook = &gow3_cheat_hooks[i];
-            if (hook->id != id) continue;
-            image[at[i]] = 0xe9;
-            memcpy(image + at[i] + 1, &relative[i], 4);
-            memset(image + at[i] + 5, 0x90, hook->length - 5);
-        }
-        gow3_cheat_status(id);
-        printf("Cheats: %s ready (live toggle, initially disabled unless saved)\n", names[id]);
+        slot = found;
+        debug_cheats_ready |= 1u << i;
+        gow3_cheat_status(gow3_debug_cheat_ids[i]);
     }
+    if (debug_cheats_ready) {
+        debug_settings_slot = slot;
+        CloseHandle(CreateThread(NULL, 0, debug_cheats_thread, NULL, 0, NULL));
+        printf("Cheats: game debug settings at image+0x%" PRIx64 " (god mode, ammo, reload, sprint, chapters; live)\n",
+               slot);
+    }
+    const uint64_t at = gow3_signature_find(image, size, &gow3_echo_site);
+    if (at == UINT64_MAX || !mapped(segments, count, at, GOW3_ECHO_LENGTH)) {
+        printf("Cheats: continuous Tactical Echo unavailable (code not found in this eboot.bin)\n");
+        return;
+    }
+    echo_site = at;
+    image[at] = 0xcc;
+    gow3_cheat_status(GOW3_CHEAT_ECHO);
+    printf("Cheats: continuous Tactical Echo ready (live; use the Echo once after loading)\n");
+#else
+    (void)segments; (void)count; (void)size;
+    printf("Cheats: unavailable on this platform\n");
+#endif
 }
 
 /* Damage hook for the enemy health bar (src/actor_hook.h). Always
@@ -654,13 +701,16 @@ static void install_post_effects(Segment *segments, uint64_t count, uint64_t siz
 
 /* Upscaler quality modes (src/scene_res_hook.h): GOW3_RENDER_RES=WxH below 1080p renders the 3D
  * scene at that size while the display, UI and movies stay 1920x1080; the GPU side upscales the
- * scene to the output before the UI is composed. Every site is checked before any is written. */
+ * scene to the output before the UI is composed. The size is a cell the in-game menu rewrites:
+ * the next frame makes the scene targets again at the new size. Every site is checked before
+ * any is written. */
 static void install_scene_resolution(Segment *segments, uint64_t count, uint64_t size) {
     const char *res = getenv("GOW3_RENDER_RES");
     unsigned width = 0, height = 0;
     if (!res || !*res || sscanf(res, "%ux%u", &width, &height) != 2) return;
-    if (width < 320 || height < 180 || width > 1920 || height > 1080 || (width == 1920 && height == 1080)) {
-        printf("Scene resolution: %s ignored (only sizes below 1920x1080)\n", res);
+    /* Below 1080p: the quality modes; wider than 16:9 (ultrawide, src/ultrawide_hook.h): up to 8K. */
+    if (width < 320 || height < 180 || width > 7680 || height > 4320 || (width == 1920 && height == 1080)) {
+        printf("Scene resolution: %s ignored (outside 320x180..7680x4320)\n", res);
         return;
     }
     uint64_t at[GOW3_SCENE_SIZE_SITES];
@@ -677,20 +727,149 @@ static void install_scene_resolution(Segment *segments, uint64_t count, uint64_t
         printf("Scene resolution: unavailable (view copy code not found in this eboot.bin)\n");
         return;
     }
+    uint64_t recreate[2];
+    for (unsigned i = 0; i < 2; ++i) {
+        recreate[i] = gow3_signature_find(image, size, &gow3_scene_recreate_sites[i]);
+        if (recreate[i] == UINT64_MAX || !mapped(segments, count, recreate[i], GOW3_SCENE_RECREATE_HOOK_LENGTH)) {
+            printf("Scene resolution: unavailable (target re-creation code not found in this eboot.bin)\n");
+            return;
+        }
+    }
+    Gow3SceneSize *cell = hook_page();
+    *cell = (Gow3SceneSize){width, height, width, height};
     unsigned char *stub = hook_page();
-    if (!gow3_scene_rect_build_stub(stub, (uintptr_t)stub, (uintptr_t)(image + rect), width, height)) {
+    const unsigned rect_length = gow3_scene_rect_build_stub(stub, (uintptr_t)stub, (uintptr_t)(image + rect), cell);
+    unsigned char *recreate_stub[2] = {stub + 256, stub + 384};
+    if (!rect_length ||
+        !gow3_scene_recreate_build_stub(recreate_stub[0], (uintptr_t)recreate_stub[0],
+                                        (uintptr_t)(image + recreate[0]), cell) ||
+        !gow3_scene_recreate_build_stub(recreate_stub[1], (uintptr_t)recreate_stub[1],
+                                        (uintptr_t)(image + recreate[1]), cell)) {
         printf("Scene resolution: unavailable (stub outside relative range)\n");
         return;
     }
     protect(stub, page_size, 5);
+    for (unsigned i = 0; i < GOW3_SCENE_SIZE_SITES; ++i) {
+        unsigned char probe_copy[12];
+        memcpy(probe_copy, image + at[i], 12);
+        if (!gow3_scene_size_write(probe_copy, (uintptr_t)(image + at[i]), gow3_scene_size_sites[i].width_first, cell)) {
+            printf("Scene resolution: unavailable (size cell outside relative range)\n");
+            return;
+        }
+    }
     if (!install_jump(rect, GOW3_SCENE_RECT_HOOK_LENGTH, stub)) {
         printf("Scene resolution: unavailable (hook outside relative-jump range)\n");
         return;
     }
     for (unsigned i = 0; i < GOW3_SCENE_SIZE_SITES; ++i)
-        gow3_scene_size_write(image + at[i], gow3_scene_size_sites[i].width_first, width, height);
-    printf("Scene resolution: 3D scene %ux%u, display and UI 1920x1080 (views at image+0x%" PRIx64 ")\n",
-           width, height, rect);
+        gow3_scene_size_write(image + at[i], (uintptr_t)(image + at[i]), gow3_scene_size_sites[i].width_first, cell);
+    /* Without these the size stays the startup one (the menu then asks for a restart). */
+    const int live = install_jump(recreate[0], GOW3_SCENE_RECREATE_HOOK_LENGTH, recreate_stub[0]) &&
+                     install_jump(recreate[1], GOW3_SCENE_RECREATE_HOOK_LENGTH, recreate_stub[1]);
+    if (live) gow3gpu_scene_size_register((uint32_t *)cell);
+    printf("Scene resolution: 3D scene %ux%u, display and UI 1920x1080 (views at image+0x%" PRIx64 ")%s\n",
+           width, height, rect, live ? ", live quality changes" : "");
+}
+
+#ifdef _WIN32
+/* Free camera (src/free_camera_hook.h): F9 or the menu's switch detaches the player view's
+ * camera, F10 puts it back where the game's camera is. The pose starts at the game's and the
+ * game's pad stays neutral meanwhile (runtime_pad_free_camera). A different view object (a new
+ * level, a cutscene camera) ends it. */
+static Gow3FreeCamera free_camera;
+static uintptr_t free_camera_view;
+static LARGE_INTEGER free_camera_time;
+static ABI void free_camera_visit(uintptr_t view, uintptr_t refresh) {
+    float move[3], look[4], speed;
+    unsigned keys;
+    const int input = runtime_pad_free_camera_input(move, look, &speed, &keys);
+    volatile uint8_t *flag = cheat_flags[GOW3_CHEAT_FREE_CAMERA];
+    if ((keys & 1) && flag) *flag = !*flag;
+    LARGE_INTEGER now, frequency;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&frequency);
+    float seconds = free_camera_time.QuadPart ? (float)(now.QuadPart - free_camera_time.QuadPart) / frequency.QuadPart : 0;
+    free_camera_time = now;
+    if (seconds < 0 || seconds > 0.1f) seconds = 0.1f;
+    float *pose = (float *)(view + 0x10);
+    if (view != free_camera_view) {
+        free_camera.active = 0;
+        free_camera_view = view;
+    }
+    const int wanted = flag && *flag;
+    if (wanted && (!free_camera.active || (keys & 2))) {
+        if (!gow3_free_camera_start(&free_camera, pose)) *flag = 0;
+    } else if (!wanted) {
+        free_camera.active = 0;
+    }
+    if (free_camera.active) {
+        Gow3FreeCameraInput in = {0};
+        if (input) {
+            in = (Gow3FreeCameraInput){move[0], move[1], move[2], look[2], look[3], look[0], look[1], speed};
+        }
+        if (gow3_free_camera_step(&free_camera, &in, seconds)) {
+            memcpy(pose, free_camera.matrix, sizeof(free_camera.matrix));
+        } else {
+            free_camera.active = 0;
+            if (flag) *flag = 0;
+        }
+    }
+    runtime_pad_free_camera(free_camera.active);
+    ((ABI void (*)(uintptr_t))refresh)(view);
+}
+#endif
+
+static void install_free_camera(Segment *segments, uint64_t count, uint64_t size) {
+#ifdef _WIN32
+    const uint64_t at = gow3_signature_find(image, size, &gow3_free_camera_site);
+    if (at == UINT64_MAX || !mapped(segments, count, at, GOW3_FREE_CAMERA_LENGTH) ||
+        memcmp(image + at, gow3_free_camera_original, GOW3_FREE_CAMERA_LENGTH)) {
+        printf("Free camera: unavailable (camera code not found in this eboot.bin)\n");
+        return;
+    }
+    unsigned char *stub = hook_page();
+    if (!gow3_free_camera_build_stub(stub, (uintptr_t)stub, (uintptr_t)free_camera_visit,
+                                     (uintptr_t)(image + at + GOW3_FREE_CAMERA_LENGTH))) {
+        printf("Free camera: unavailable (stub outside relative range)\n");
+        return;
+    }
+    protect(stub, page_size, 5);
+    if (!install_jump(at, GOW3_FREE_CAMERA_LENGTH, stub)) {
+        printf("Free camera: unavailable (hook outside relative-jump range)\n");
+        return;
+    }
+    gow3_cheat_status(GOW3_CHEAT_FREE_CAMERA);
+    printf("Free camera: ready (F9 toggle, F10 recenter; camera at image+0x%" PRIx64 ")\n", at);
+#else
+    (void)segments; (void)count; (void)size;
+#endif
+}
+
+/* Hor+ for outputs wider than 16:9 (src/ultrawide_hook.h): the aspect of the output the launcher
+ * chose (GOW3_OUTPUT_RES), whose scene the loader renders at that shape (GOW3_RENDER_RES). */
+static void install_ultrawide(Segment *segments, uint64_t count, uint64_t size) {
+    const char *res = getenv("GOW3_OUTPUT_RES");
+    unsigned width = 0, height = 0;
+    if (!res || !*res || sscanf(res, "%ux%u", &width, &height) != 2 || !width || !height) return;
+    const float k = ((float)width / (float)height) / (16.0f / 9.0f);
+    if (k <= 1.01f) return;
+    const uint64_t at = gow3_signature_find(image, size, &gow3_ultrawide_frustum_site);
+    if (at == UINT64_MAX || !mapped(segments, count, at, GOW3_ULTRAWIDE_HOOK_LENGTH)) {
+        printf("Ultrawide: unavailable (camera frustum code not found in this eboot.bin)\n");
+        return;
+    }
+    unsigned char *stub = hook_page();
+    if (!gow3_ultrawide_build_stub(stub, (uintptr_t)stub, (uintptr_t)(image + at), k)) {
+        printf("Ultrawide: unavailable (stub outside relative range)\n");
+        return;
+    }
+    protect(stub, page_size, 5);
+    if (!install_jump(at, GOW3_ULTRAWIDE_HOOK_LENGTH, stub)) {
+        printf("Ultrawide: unavailable (hook outside relative-jump range)\n");
+        return;
+    }
+    printf("Ultrawide: %ux%u, Hor+ field of view x%.4f (camera frustum at image+0x%" PRIx64 ")\n",
+           width, height, k, at);
 }
 
 /* Native PC button prompts (src/prompt_hook.h): one PC atlas per distinct game atlas, a slot
@@ -1428,7 +1607,9 @@ int main(int argc, char **argv) {
     if (gpu_enabled) install_fov(segments, ns, size);
     if (gpu_enabled) install_post_effects(segments, ns, size);
     if (gpu_enabled) install_scene_resolution(segments, ns, size);
+    if (gpu_enabled) install_ultrawide(segments, ns, size);
     if (gpu_enabled) install_prompts(segments, ns, size);
+    if (gpu_enabled) install_free_camera(segments, ns, size);
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
 #endif

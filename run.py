@@ -106,6 +106,18 @@ def launch_prefix(env):
     return []
 
 
+def scene_memory_patch(render_res):
+    try:
+        w, h = map(int, render_res.split('x'))
+    except ValueError:
+        return None
+    extra = w * h / (1920 * 1080) - 1
+    if extra <= 0:
+        return None
+    pool = next((mb for mb in (256, 512, 768, 1024, 1280) if extra * 430 <= mb), 1280)
+    return f'Scene memory - {pool} MB'
+
+
 def find_executable(name):
     """bin/ (packaged), else out/ (built with build.sh)."""
     for candidate in (PORT / 'bin' / name, PORT / 'out' / name):
@@ -277,6 +289,10 @@ def main():
             names = selected_patches(profile[1], profile[2], env.get('GOW3_PATCHES', ''), env.get('GOW3_PATCHES_ONLY') == '1')
             # gow3.ini decides the resolution and frame rate patches (in-game menu, launcher).
             names = graphics_options.patch_names(names, graphics)
+            # A 3D scene above 1080p (ultrawide, GOW3_RENDER_RES): the smallest "Scene memory" patch
+            # for its pixels (~430 MiB of video pool per extra 1080p, tools/make_kzsf_res_patches.py).
+            if (memory := scene_memory_patch(env.get('GOW3_RENDER_RES', ''))):
+                names.append(memory)
             names = graphics_options.restrict_to_available(names, patches.available_patches(profile[1], profile[2]))
             env['GOW3_PATCHES'] = ';'.join(names)
             env['GOW3_PATCHES_ONLY'] = '1'

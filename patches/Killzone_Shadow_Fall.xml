@@ -209,4 +209,39 @@
             <Line Type="bytes" Address="0x00ce6260" Value="68010000" Pattern="c7 45 a0 80 07 00 00 c7 45 a4 38 04 00 00 c7 45 a8 00 00 00 00 c6 45 ac" At="10"/>
         </PatchList>
     </Metadata>
+    <Metadata Title="Killzone Shadow Fall" Name="Scene memory - 256 MB" Note="Memory for a 3D scene above 1080p (ultrawide). Grows the GNM video pool by 256 MB and RW textures by 8 MB. Requires setting DMEM to 264 MB or more." Author="lesca" PatchVer="0.1" AppVer="01.81" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0072bb3b" Value="0000f029" Pattern="49 c7 86 b0 00 00 00 00 00 f0 19 49" At="7"/>
+            <Line Type="bytes" Address="0x0072bb51" Value="00000001" Pattern="49 c7 86 10 01 00 00 00 00 80 00 49" At="7"/>
+            <Line Type="bytes" Address="0x0072bb66" Value="00000ed5" Pattern="48 05 00 00 8e e5 49 89 86 40 01 00" At="2"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Killzone Shadow Fall" Name="Scene memory - 512 MB" Note="Memory for a 3D scene above 1080p (ultrawide). Grows the GNM video pool by 512 MB and RW textures by 8 MB. Requires setting DMEM to 520 MB or more." Author="lesca" PatchVer="0.1" AppVer="01.81" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0072bb3b" Value="0000f039" Pattern="49 c7 86 b0 00 00 00 00 00 f0 19 49" At="7"/>
+            <Line Type="bytes" Address="0x0072bb51" Value="00000001" Pattern="49 c7 86 10 01 00 00 00 00 80 00 49" At="7"/>
+            <Line Type="bytes" Address="0x0072bb66" Value="00000ec5" Pattern="48 05 00 00 8e e5 49 89 86 40 01 00" At="2"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Killzone Shadow Fall" Name="Scene memory - 768 MB" Note="Memory for a 3D scene above 1080p (ultrawide). Grows the GNM video pool by 768 MB and RW textures by 16 MB. Requires setting DMEM to 784 MB or more." Author="lesca" PatchVer="0.1" AppVer="01.81" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0072bb3b" Value="0000f049" Pattern="49 c7 86 b0 00 00 00 00 00 f0 19 49" At="7"/>
+            <Line Type="bytes" Address="0x0072bb51" Value="00008001" Pattern="49 c7 86 10 01 00 00 00 00 80 00 49" At="7"/>
+            <Line Type="bytes" Address="0x0072bb66" Value="00008eb4" Pattern="48 05 00 00 8e e5 49 89 86 40 01 00" At="2"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Killzone Shadow Fall" Name="Scene memory - 1024 MB" Note="Memory for a 3D scene above 1080p (ultrawide). Grows the GNM video pool by 1024 MB and RW textures by 24 MB. Requires setting DMEM to 1048 MB or more." Author="lesca" PatchVer="0.1" AppVer="01.81" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0072bb3b" Value="0000f059" Pattern="49 c7 86 b0 00 00 00 00 00 f0 19 49" At="7"/>
+            <Line Type="bytes" Address="0x0072bb51" Value="00000002" Pattern="49 c7 86 10 01 00 00 00 00 80 00 49" At="7"/>
+            <Line Type="bytes" Address="0x0072bb66" Value="00000ea4" Pattern="48 05 00 00 8e e5 49 89 86 40 01 00" At="2"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Killzone Shadow Fall" Name="Scene memory - 1280 MB" Note="Memory for a 3D scene above 1080p (ultrawide). Grows the GNM video pool by 1280 MB and RW textures by 32 MB. Requires setting DMEM to 1312 MB or more." Author="lesca" PatchVer="0.1" AppVer="01.81" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0072bb3b" Value="0000f069" Pattern="49 c7 86 b0 00 00 00 00 00 f0 19 49" At="7"/>
+            <Line Type="bytes" Address="0x0072bb51" Value="00008002" Pattern="49 c7 86 10 01 00 00 00 00 80 00 49" At="7"/>
+            <Line Type="bytes" Address="0x0072bb66" Value="00008e93" Pattern="48 05 00 00 8e e5 49 89 86 40 01 00" At="2"/>
+        </PatchList>
+    </Metadata>
 </Patch>

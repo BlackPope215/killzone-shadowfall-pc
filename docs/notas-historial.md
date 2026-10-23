@@ -346,3 +346,80 @@ PLAN B (modos reales): 4 sitios de tamaño de escena = WxH render + stub en 0x50
 === RESUME POINT 2026-10-23 03:15 (palabra clave "OWL HELGHAST" -> leer desde acá) ===
 TODO SIN COMMIT (usuario quiere commitear al despertar, 2026-10-23 de día): Xbyak DedupWalker + hook_page fix, Paso 6 íconos de teclas (prompt_hook.h/prompt_art.h, probado OK), Paso 7 extras IQ pearlx (aniso MaxLod>0, LOD bias solo G-buffer, rango ±2; SIN PROBAR), modos de calidad del escalador (src/scene_res_hook.h + probe.c install_scene_resolution, run.py sin parche XML para RENDER_RES; probado: UI OK, sin ganancia de FPS en la PC del usuario por límite CPU), Insert muestra "WxH scene, WxH output", launcher: opción "Calidad de FSR / DLSS" visible en Gráficos (settings upscale_quality, GOW3_UPSCALE_QUALITY la pisa) + pestañas con scroll (canvas, barra solo si no entra, rueda). docs/notas-historial.md está sin trackear (decidir si se commitea). dist refrescado 03:11 con bats "Prueba escalador 1/2/3".
 PASOS MAÑANA: (1) git diff revisar + commit(s) en main local (mensajes por tema) + bump VERSION si se publica; (2) seguir roadmap: cámara libre (pearlx kzsf_free_camera.h), cheats/debug, luego perf CPU (ps4_core, hilo de comandos GPU ~2100 draws/frame), ultrawide, FSR4, launcher, crashes Intel. Plan A (media anchura nativa MP, view+0x11) queda como alternativa de "rendimiento" si hiciera falta.
+
+## 2026-10-23 Calidad de escalado EN VIVO + overlay verde (sin commit, dist refrescado 10:17, SIN PROBAR)
+- Ghidra: 0x50f8b0 (render por cuadro) y 0x50fbf0 chequean cada cuadro `mov al,[rbx+0x11]; cmp al,[rbx+0x10]; jnz +0x17` -> bloque que recrea TODOS los targets de escena (0x50a670) con el tamaño de los sitios 0x50f930/0x50fc43. El motor ya sabe recrear en vivo.
+- scene_res_hook.h: celda Gow3SceneSize {pedido w,h, aplicado w,h} en hook_page. 4 sitios de tamaño = `mov r32,[rip+aplicado]`; stub del rect lee el aplicado (push/pop rcx); stub nuevo en 0x50f90c/0x50fc1f (firmas únicas): si pedido != aplicado -> aplicado = pedido y salta al bloque de recreación (site+0x17). Verificado con llvm-objdump (stubtest en scratchpad).
+- GPU (vk_temporal_upscaler OnFrameStart): en sesión escalada render_width/height siguen al tamaño de la cámara SOLO si coincide con el aplicado (Gow3Settings scene_applied_*, publicado por el overlay) -> descarta pasadas de 960x540; changed=true reinicia historial; FSR/DLSS/FG recrean por tamaño.
+- Ajuste upscale_quality (gow3.ini, GOW3_UPSCALE_QUALITY que ahora pasa el launcher; SHARED_SETTINGS str). Overlay Image > "Upscaling quality" con tamaños: entre modos reducidos en vivo; Nativa o primer cambio desde Nativa = reinicio (QualityNeedsRestart en RestartChanges). Fila Render resolution muestra tamaño vivo.
+- Overlay: acentos verdes (ImGuiCol_*), resto de ports quedan azul.
+- Riesgos a mirar en la prueba: memoria/VRAM tras varios cambios, un cuadro con UI rara en la transición, crash al recrear en medio de combate.
+- Prueba 1 (10:19-10:23, usuario): NO andaba nada (ni el launcher bajaba la escena). Log: "Scene resolution: unavailable (size cell outside relative range)": el chequeo de alcance usaba la COPIA en el stack como rip. Fix: gow3_scene_size_write(out, site, ...) con la dirección real. dist 10:25. Esperando prueba 2.
+- Prueba 2: PROBADO OK por el usuario (cambio en vivo entre modos reducidos, Nativa con reinicio, overlay verde). SIN COMMIT.
+
+=== RESUME POINT 2026-10-23 mañana (palabra clave "VEKTAN WIDE" -> leer desde acá) ===
+Commits v0.4.0 hechos (f376e03, 7b5d45f, tag local v0.4.0, sin push; el usuario sube el release). Sin commit: calidad en vivo + overlay verde (probado OK) -> commitear junto con lo próximo, NO meterlo en el zip v0.4.0 (respaldar zip antes de package_kzsf.sh).
+SIGUIENTE (pedido del usuario): Ultrawide (21:9, Hor+, HUD en su lugar; ref SpartanPort docs/ultrawide.md + MovieBars) y FSR 4 (launcher gow3_lang tiene textos FSR4/assets; vk_fsr4.cpp ya existe en el GPU core; ver por qué no se ofrece en KZ). Usar Ghidra/REA estático primero.
+
+## 2026-10-23 FSR 4 + Ultrawide (sin commit, dist refrescado 10:51, SIN PROBAR)
+FSR 4 (no hizo falta RE: el core ya lo tenía, KZ solo no lo ofrecía):
+- launcher/kzsf_fsr4.py: descarga los 189 archivos v07 INT8 (mismo commit FireBurn/Q2RTX que tools/fetch_fsr4_assets.sh, ~30 MB, 1 min) a PORT_DIR/fsr4_shaders; launcher Avanzado → Método "AMD FSR 4 (mejor calidad)" + fila "Archivos de FSR 4" (estado + Descargar). GOW3_UPSCALER=fsr4, GOW3_FSR4_DIR. Sin archivos / sin INT8 -> cae solo a FSR 3.1 (fsr4_problem).
+- Menú Insert: Upscaler FSR 3.1 / FSR 4 (si fsr4_supported) / DLSS, muestra fsr4_problem.
+- package_kzsf.sh: fsr4_shaders prohibido en el zip y conservado al refrescar dist.
+- PENDIENTE decidir: fsr4_shaders/opt (tools/fsr4_optimize.sh: post 3.5x más rápido + arreglo de la carrera del pass 11 a 1080p = parpadeo borde izquierdo). Generado en dist con spirv-cross/glslang de msys; el launcher NO puede generarlo en PCs de jugadores -> ¿incluir los 24 .spv (3 MB, MIT) en el release?
+Ultrawide (Ghidra):
+- Cámara: +0x6c fov vertical (grados), +0x70 aspecto. 10 sitios tan(h/2)/aspecto->atan (0x7230c0, 0x722040, 0xd92a00, 0xa583d0, 0xa58bb0 x2, 0xc05180, 0x6356c0, 0x666f30, 0xdc61e0) usan el getter 0xd929d0 = [0x3c3ffe0]+0x1f78 * 16/9 (+0x1f78 lo escribe también 0xdcab2f desde ViewportLayout AspectRatioMultiplier: NO es solo el ctor). Se dejan en 16:9 -> fov vertical = el de 16:9.
+- Camera::GetFrustum 0x6356c0 (vtable slot +0xa0 de 0x163ab80 y 0x163ad50; inversa 0x635800) -> 0x2bd5a0 frustum (±near*tan(fov/2)*aspecto). src/ultrawide_hook.h: 0x6356ea vmovss xmm3,[rbx+0x70] -> stub *k (k=(W/H)/(16/9)). 0x2bd5a0 no se toca (luces/sombras/sondas lo usan: 0x4f82a0, 0x53a760, 0x556650, 0x677520, 0xdc61e0, 0xe58eb0).
+- Escena: scene_res_hook acepta tamaños > 1080p (hasta 7680x4320); launcher "Ultrawide (beta)" (Gráficos): 2560x1080, 3440x1440, 3840x1600, 5120x1440; escena con <=1080 líneas (ultrawide_scene = UpscaleSceneSize en gow3_settings.h): 2560x1080, 2584x1080, 2592x1080, 3840x1080; modos de calidad a 720/630/540/360 de alto.
+- Memoria: parches "Scene memory - 256/512/768/1024/1280 MB" (make_kzsf_res_patches.py MEMORY, solo arena/RW/rest); run.py scene_memory_patch() elige por píxeles (~430 MB por 1080p extra).
+- GPU: ui_composition.h Fit(): UI en coords nativas 1920x1080 con escala uniforme y centrada si la salida no es 16:9 (target_offset en vk_rasterizer: viewport, scissor, push xoffset, memo).
+- Esperado/limitaciones: HUD/menús/videos en 16:9 al centro; marcadores 3D del HUD (objetivos) pueden quedar desplazados horizontalmente (proyección Hor+ vs UI 16:9); fondo oscurecido de menús solo en el centro; costados durante videos pueden mostrar el último cuadro (falta movie bars).
+- PRUEBA USUARIO 2026-10-23 (RTX 2060S): FSR 4 OK (~86 FPS); ULTRAWIDE 21:9 y 32:9 OK (menús, UI, HUD bien) -> DADO POR HECHO (beta, que reporten usuarios).
+- Conocido FSR 4: al cargar nivel se congela 3-4 s la primera vez (creación del contexto/pipelines del modelo). Cambiar modo de calidad en vivo con FSR 4 hacía temblar la imagen hasta cambiar de escalador y volver.
+  Fix (sin probar): vk_temporal_upscaler recrea Fsr4Upscaler cuando cambia el tamaño de escena en vivo (como al cambiar de escalador) y en sesión escalada el preset del modelo sigue la escala real (1x nativo, <1.6 calidad, <1.85 equilibrado, <2.5 rendimiento, si no ultra); antes quedaba el preset de inicio. Ojo: recrear = otra pausa de ~3 s al cambiar el modo.
+- Decidido: el release incluye fsr4_shaders/opt (24 .spv + LICENSE-FSR4-v07.txt); package_kzsf.sh corre tools/fetch_fsr4_assets.sh (+optimize) y exige 24; los originales los baja el launcher.
+
+## Trucos + cámara libre (2026-10-23, "SHADOW CHEATS")
+
+Sin commit (va junto con todo lo posterior a v0.4.0). PROBADO EN JUEGO por el usuario 2026-10-23: todo OK.
+
+- Descubrimiento (Ghidra): el retail conserva el objeto `DebugSettings` de los devs (exportado a scripts
+  como gDebugSettings, métodos SetGodMode/EnableInfiniteAmmo/SetSPAllUnlocked... registrados en 0xff0860,
+  constructor 0xff0800, vtable 0x18255d0, tamaño 0x38). Puntero en [0x3c66f70+0x7b0] = 0x3c67720. Campos:
+  +0x1c SP todo desbloqueado (capítulos: 0x8efef0/0x8efe30/0x8f4050), +0x1d MP desbloqueado, +0x20 sin
+  chequeo de inactividad, +0x24 GodMode int 0..2 (0xa665c0 >0, 0xa66600 ==2, 0xa70ff0 anula daño),
+  +0x28 munición infinita (0xb4e9e0, solo jugador), +0x29 estamina infinita (0xa66650, usado en 0xb38950),
+  +0x30 sin recarga (0xca5a20/0xca5990/0xca4fc0, global), +0x17 algo del modelo FP (0xa69c70/0xa69d30),
+  +0x08..0x0f flags por defecto 1 (0x08 copiado en cámara 0xd92a00, 0x0e en movimiento), +0x19, +0x1a,
+  +0x1f, +0x34 retos diarios. Los lectores de jugador chequean +0xa0 / +0xa1 del controlador.
+- Implementado (src/cheat_hook.h): hilo del loader cada 100 ms escribe los campos según el menú (firma por
+  cada lector, todas deben dar el mismo slot). Tactical Echo continuo = int3 en 0xc1a860 (de pearlx) servido
+  en vectored_fault (echo_trap). Ids: GOD, AMMO, NO_RELOAD, SPRINT, ECHO, CHAPTERS, FREE_CAMERA (no se guarda).
+- Cámara libre (src/free_camera_hook.h): jmp en 0xd92e8e (firma extendida: el patrón corto sale 33 veces)
+  a stub que llama free_camera_visit(view, refresh): escribe la pose en [view+0x10] y llama refresh.
+  F9/F10, entrada en runtime_pad_free_camera_input; pad neutro mientras tanto. Menú: pestaña Cheats (5ª).
+- Launcher: pestaña TRUCOS (gow3.ini cheat_*). Tests: test_cheat_hook.cpp reescrito; borrado
+  test_cheat_hooks.cpp (GoW3). graphics-settings-test falla en aserción FSR1 preexistente (no relacionado).
+- No hay menú debug con UI en el retail (solo DebugSettings); pendiente probar si +0x17 muestra el cuerpo.
+
+RESUME POINT "LAUNCHER HELGAN" (2026-10-23): siguiente = pulir/rediseñar el launcher para diferenciarlo de otros ports; empezar proponiendo ideas.
+
+## Launcher nuevo HTML "LAUNCHER HELGAN" (2026-10-23, sin commit, PROBADO OK por el usuario)
+- launcher/kzsf_web.py (pywebview 6.2.1 + Edge WebView2 vía pythonnet): clase Api = llamadas de la página
+  (window.pywebview.api), _pages() = esquema de páginas/tarjetas/opciones (select/toggle/slider/fsr4/keys/pads),
+  eventos Python->JS con Api._emit -> window.kz.event. launcher/web/{index.html,style.css,app.js} se inyectan en
+  una sola página (html=, sin servidor local). Temas: :root[data-theme] vektan (cian) / helghast (naranja),
+  launcher.json launcher_theme. Arte del juego (pic0/icon0) reducido a JPEG con Pillow.
+- kzsf_launcher.py: game_env()/launch_game() extraídos (los usan Tk y web); main() prueba kzsf_web.run() y si
+  falla (sin WebView2/.NET) abre Tk. KZSF_LAUNCHER_UI=tk fuerza el clásico ("Classic launcher.bat" en el release).
+- package_kzsf.sh: pip pywebview==6.2.1, --add-data web, borra pythonnet Python.Runtime.xml (chequeo .xml),
+  copia Classic launcher.bat. Zip +4.5 MB.
+- Vista previa sin ventana: `kzsf_web.py --preview out.html`; capturas con pywebview fuera de pantalla +
+  CoreWebView2.CapturePreviewAsync (script de scratch). Actualización probada con
+  kz_work/bats/'Prueba actualizacion (copia).bat' (KZSF_UPDATE_AS_VERSION=0.3.0 -> instala v0.4.0): OK.
+
+PENDIENTE (orden del usuario, 2026-10-23): commit de todo lo posterior a v0.4.0 cuando el usuario avise; luego
+(1) ps4_core: mejoras de rendimiento solo si valen el trabajo; (2) íconos de botones Xbox en el juego (como los de
+teclado, elegible en el launcher; textura nueva); (3) Linux: ver si es viable empaquetar; (4) issues importantes
+(sobre todo crashes Intel). Última prioridad: cursor de mouse en los menús del juego (ver si es posible).
+RESUME POINT "NEXUS COMMIT" (2026-10-23): primero commitear todo (sin commit desde v0.4.0), después seguir la lista.

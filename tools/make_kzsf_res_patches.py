@@ -44,6 +44,12 @@ SIZES = {'720p': (1280, 720, 0, 0), '1440p': (2560, 1440, 384, 8), '1800p': (320
 SIZES.update({f'{w}x{h}': (w, h, 0, 0) for w, h in
               ((1856, 1044), (1708, 960), (1600, 900), (1488, 836), (1280, 720), (1120, 630), (1066, 600),
                (960, 540), (852, 480), (640, 360))})
+# Ultrawide scenes (src/scene_res_hook.h renders the scene at GOW3_RENDER_RES; the display and UI
+# stay 1080p): the memory of a larger scene without the resolution sites, by pixel count over
+# 1080p (run.py picks the smallest that covers the scene). ~430 MiB of video pool per extra 1080p.
+MEMORY = {256: 8, 512: 8, 768: 16, 1024: 24, 1280: 32}
+
+
 def lines(image, size):
     arena, rw = size[2] << 20, size[3] << 20
     values = {'w': size[0], 'h': size[1], 'hw': size[0] // 2, 'hh': size[1] // 2,
@@ -76,6 +82,12 @@ def main():
                      f'Note="Game render resolution {size[0]}x{size[1]}.{memory}" '
                      f'Author="lesca" PatchVer="0.1" AppVer="01.81" AppElf="eboot.bin" isEnabled="false">')
         parts += ['        <PatchList>', *lines(image, size), '        </PatchList>', '    </Metadata>']
+    for pool, rw in MEMORY.items():
+        parts.append(f'    <Metadata Title="Killzone Shadow Fall" Name="Scene memory - {pool} MB" '
+                     f'Note="Memory for a 3D scene above 1080p (ultrawide). Grows the GNM video pool by {pool} MB '
+                     f'and RW textures by {rw} MB. Requires setting DMEM to {pool + rw} MB or more." '
+                     f'Author="lesca" PatchVer="0.1" AppVer="01.81" AppElf="eboot.bin" isEnabled="false">')
+        parts += ['        <PatchList>', *lines(image, (1920, 1080, pool, rw)), '        </PatchList>', '    </Metadata>']
     parts.append('</Patch>')
     Path(sys.argv[2]).write_text('\n'.join(parts) + '\n', encoding='utf-8', newline='\n')
 

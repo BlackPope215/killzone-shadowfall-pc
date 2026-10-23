@@ -29,6 +29,7 @@ import time
 import webbrowser
 import zipfile
 
+import kzsf_fsr4
 import kzsf_update
 
 WINDOWS = sys.platform == 'win32'
@@ -40,7 +41,7 @@ FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 
-VERSION = '0.4.0'
+VERSION = '0.5.0'
 TITLE_ID = 'CUSA00190'
 # Other releases of the game players run (their languages), accepted untested: the port was built and
 # tested on CUSA00190. Every one must be at version 01.81.
@@ -53,6 +54,8 @@ SETTINGS_FILE = USER_DIR / 'settings.ini'
 PS4_DIR = USER_DIR / 'ps4'
 LOGS_DIR = USER_DIR / 'logs'
 UPDATE_DIR = USER_DIR / 'update'
+# FSR 4 shaders, downloaded by the launcher (kzsf_fsr4.py); the game reads GOW3_FSR4_DIR.
+FSR4_DIR = PORT_DIR / 'fsr4_shaders'
 KEEP_LOGS = 10
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
@@ -84,6 +87,22 @@ UI_FONT = 'Segoe UI'
 TEXTS = {
     'es': {
         'tab_game': 'Juego', 'tab_graphics': 'Gráficos', 'tab_controls': 'Controles', 'tab_advanced': 'Avanzado',
+        'tab_cheats': 'Trucos',
+        'cheats': 'Trucos', 'cheats_help': 'Solo afectan al jugador. También se cambian en el juego, al instante, '
+        'en el menú (Insert) > Cheats.',
+        'cheat_god': 'Modo dios', 'cheat_god_help': 'No recibes daño.',
+        'cheat_ammo': 'Munición infinita', 'cheat_ammo_help': 'La munición de reserva y las granadas no se gastan.',
+        'cheat_no_reload': 'Sin recarga', 'cheat_no_reload_help': 'El cargador nunca se vacía.',
+        'cheat_sprint': 'Sprint ilimitado', 'cheat_sprint_help': 'La resistencia se recarga mientras corres.',
+        'cheat_echo': 'Eco táctico continuo', 'cheat_echo_help': 'El escaneo del OWL sigue activo. Úsalo una vez '
+        'después de cada carga.',
+        'debug': 'Depuración',
+        'cheat_chapters': 'Desbloquear todos los capítulos', 'cheat_chapters_help': 'Todos en Selección de capítulo; '
+        'tu progreso guardado no cambia.',
+        'free_camera': 'Cámara libre', 'free_camera_help': 'En el juego: F9 la activa o desactiva, F10 vuelve al '
+        'jugador. WASD mover, Q / E bajar / subir, ratón o flechas mirar, Shift más rápido, Ctrl más lento. Con '
+        'mando: sticks, L1 / R1 bajar / subir, R2 más rápido, L2 más lento (actívala desde el menú > Cheats). El '
+        'jugador queda quieto mientras tanto.',
         'play': 'JUGAR', 'playing': 'EN JUEGO', 'preparing': 'Iniciando…',
         'game_folder': 'Carpeta del juego',
         'game_folder_help': f'La carpeta de tu dump de PS4 (versión {GAME_VERSION}; {TITLE_ID}, la probada, o '
@@ -118,6 +137,11 @@ TEXTS = {
         'window_size': 'Tamaño de ventana',
         'window_size_help': 'Solo en modo ventana. La imagen del juego se escala a la ventana.',
         'render_res': 'Resolución de render', 'res_native': '1080p (como en PS4)',
+        'ultrawide': 'Ultrawide (beta)', 'ultrawide_off': 'No (16:9)',
+        'ultrawide_help': 'Para monitores 21:9 o 32:9: la imagen llena la pantalla y se ve más a los costados '
+                          '(Hor+), con el HUD, los menús y los videos en el centro en 16:9. Usa FSR / DLSS '
+                          '(Avanzado → Método); reemplaza la resolución de render. La escena se dibuja con '
+                          'hasta 1080 líneas y FSR / DLSS la llevan a la salida. Se aplica al iniciar.',
         'render_res_help': 'Más alta = más nítida, más GPU y VRAM. Método en Avanzado. Se aplica al iniciar.',
         'fps_limit': 'Límite de FPS', 'vsync': 'VSync (sincronización vertical)',
         'fps_unlimited': 'Sin límite (experimental)', 'fps_experimental': 'experimental',
@@ -177,6 +201,17 @@ TEXTS = {
         'res_method': 'Método de resolución',
         'res_method_upscale': 'AMD FSR 3.1 (recomendado)',
         'res_method_dlss': 'NVIDIA DLSS (solo RTX)',
+        'res_method_fsr4': 'AMD FSR 4 (mejor calidad)',
+        'fsr4_files': 'Archivos de FSR 4',
+        'fsr4_ready': 'Instalados',
+        'fsr4_missing': 'No instalados (unos 30 MB)',
+        'fsr4_download': 'Descargar',
+        'fsr4_downloading': 'Descargando… {done}/{total}',
+        'fsr4_failed': 'Falló la descarga: {error}',
+        'fsr4_help': 'FSR 4 usa el modelo de IA de AMD (INT8): más nítido y estable que FSR 3.1, un poco más '
+                     'pesado. Funciona en placas con Vulkan 1.3 y punto entero de 8 bits (RTX 20 o más nuevas, '
+                     'Radeon RX 6000/7000/9000, Arc). Los archivos vienen de FireBurn/Q2RTX en GitHub '
+                     '(compilados del código FidelityFX de AMD, licencia MIT). Sin ellos o en otra placa usa FSR 3.1.',
         'res_method_patch': 'Clásico: parche del juego',
         'res_method_help': 'Solo cambia algo por encima de 1080p. FSR 3.1 (recomendado): el juego renderiza en '
                            '1080p y FSR lleva la imagen a la resolución elegida, con HUD, menús y videos nítidos. '
@@ -232,6 +267,21 @@ TEXTS = {
     },
     'en': {
         'tab_game': 'Game', 'tab_graphics': 'Graphics', 'tab_controls': 'Controls', 'tab_advanced': 'Advanced',
+        'tab_cheats': 'Cheats',
+        'cheats': 'Cheats', 'cheats_help': 'They only change the player. They can also be changed in game, at '
+        'once, from the menu (Insert) > Cheats.',
+        'cheat_god': 'God mode', 'cheat_god_help': 'You take no damage.',
+        'cheat_ammo': 'Infinite ammo', 'cheat_ammo_help': 'Reserve ammo and grenades are never used up.',
+        'cheat_no_reload': 'No reload', 'cheat_no_reload_help': 'The magazine never empties.',
+        'cheat_sprint': 'Unlimited sprint', 'cheat_sprint_help': 'Stamina refills while you sprint.',
+        'cheat_echo': 'Continuous Tactical Echo', 'cheat_echo_help': 'The OWL scan keeps pulsing. Use it once '
+        'after each load.',
+        'debug': 'Debug',
+        'cheat_chapters': 'Unlock all chapters', 'cheat_chapters_help': 'All of them in Chapter Select; your saved '
+        'progress is unchanged.',
+        'free_camera': 'Free camera', 'free_camera_help': 'In game: F9 toggles it, F10 returns to the player. WASD '
+        'move, Q / E down / up, mouse or arrows look, Shift faster, Ctrl slower. Gamepad: sticks, L1 / R1 down / '
+        'up, R2 faster, L2 slower (turn it on from the menu > Cheats). The player stands still meanwhile.',
         'play': 'PLAY', 'playing': 'IN GAME', 'preparing': 'Starting…',
         'game_folder': 'Game folder',
         'game_folder_help': f'The folder of your PS4 dump (version {GAME_VERSION}; {TITLE_ID}, the tested one, or '
@@ -266,6 +316,11 @@ TEXTS = {
         'window_size': 'Window size',
         'window_size_help': 'Windowed mode only. The game image is scaled to the window.',
         'render_res': 'Render resolution', 'res_native': '1080p (as on PS4)',
+        'ultrawide': 'Ultrawide (beta)', 'ultrawide_off': 'Off (16:9)',
+        'ultrawide_help': 'For 21:9 or 32:9 monitors: the picture fills the screen and shows more at the sides '
+                          '(Hor+), with the HUD, menus and videos in the middle at 16:9. Uses FSR / DLSS '
+                          '(Advanced → Method); replaces the render resolution. The scene is drawn with up '
+                          'to 1080 lines and FSR / DLSS take it to the output. Applied at start.',
         'render_res_help': 'Higher = sharper, more GPU and VRAM. Method under Advanced. Applied at start.',
         'fps_limit': 'Frame rate limit', 'vsync': 'VSync (vertical sync)',
         'fps_unlimited': 'Unlimited (experimental)', 'fps_experimental': 'experimental',
@@ -331,6 +386,17 @@ TEXTS = {
         'res_method': 'Resolution method',
         'res_method_upscale': 'AMD FSR 3.1 (recommended)',
         'res_method_dlss': 'NVIDIA DLSS (RTX only)',
+        'res_method_fsr4': 'AMD FSR 4 (best quality)',
+        'fsr4_files': 'FSR 4 files',
+        'fsr4_ready': 'Installed',
+        'fsr4_missing': 'Not installed (about 30 MB)',
+        'fsr4_download': 'Download',
+        'fsr4_downloading': 'Downloading… {done}/{total}',
+        'fsr4_failed': 'Download failed: {error}',
+        'fsr4_help': "FSR 4 uses AMD's AI model (INT8): sharper and steadier than FSR 3.1, a bit heavier. Runs on "
+                     'cards with Vulkan 1.3 and 8-bit integer dot product (RTX 20 or newer, Radeon RX '
+                     '6000/7000/9000, Arc). The files come from FireBurn/Q2RTX on GitHub (built from AMD’s '
+                     'MIT-licensed FidelityFX source). Without them or on other cards it uses FSR 3.1.',
         'res_method_patch': 'Classic: game patch',
         'res_method_help': 'Only matters above 1080p. FSR 3.1 (recommended): the game renders at 1080p and FSR '
                            'takes the image to the chosen resolution, with sharp HUD, menus and videos. DLSS: the '
@@ -492,6 +558,8 @@ GRAPHICS_DEFAULTS = {
     'show_fps': '0', 'vibration': '100', 'async_shaders': '1', 'stale_readback': '1',
     'deferred_readback': '1', 'frames_queued': '1',
     'motion_blur': '1', 'depth_of_field': '1', 'bloom': '1', 'film_grain': '1', 'camera_shake': '1',
+    'cheat_god': '0', 'cheat_ammo': '0', 'cheat_no_reload': '0', 'cheat_sprint': '0', 'cheat_echo': '0',
+    'cheat_chapters': '0',
 }
 LAUNCHER_DEFAULTS = {'game_dir': '', 'update_dir': '', 'language': '', 'window_size': '1920x1080',
                      'key_map': {}, 'pad_map': {}, 'mouse_look': True, 'mouse_sens': 1.0,
@@ -506,7 +574,7 @@ LAUNCHER_DEFAULTS = {'game_dir': '', 'update_dir': '', 'language': '', 'window_s
 DISCORD_ID = '1562348304153706608'
 DISCORD_IMAGE = 'logo'
 DISCORD_DETAILS = 'PC Port by Lesca'
-RES_METHODS = ('upscale', 'dlss', 'patch')
+RES_METHODS = ('upscale', 'fsr4', 'dlss', 'patch')
 # FSR / DLSS quality modes: the game's render size per output (resolution patches of that name in
 # patches/Killzone_Shadow_Fall.xml, tools/make_kzsf_res_patches.py). The usual 67 / 58 / 50 / 33 %
 # per axis, never above the game's own 1080p (larger patches bring lighting artifacts).
@@ -517,6 +585,19 @@ UPSCALE_RENDER = {
     '3200x1800': {'quality': '1920x1080', 'balanced': '1856x1044', 'performance': '1600x900', 'ultra': '1066x600'},
     '3840x2160': {'quality': '1920x1080', 'balanced': '1920x1080', 'performance': '1920x1080', 'ultra': '1280x720'},
 }
+# Ultrawide outputs (GOW3_OUTPUT_RES wider than 16:9): Hor+ in the loader (src/ultrawide_hook.h),
+# the UI centred at 16:9 (gpu ui_composition.h Fit).
+ULTRAWIDE = ('off', '2560x1080', '3440x1440', '3840x1600', '5120x1440')
+
+
+def ultrawide_scene(output, quality):
+    """The scene size of an ultrawide output: Gow3Settings::UpscaleSceneSize (gow3_settings.h)."""
+    w, h = map(int, output.split('x'))
+    height = {'quality': 720, 'balanced': 630, 'performance': 540, 'ultra': 360}.get(quality, 1080)
+    height = height * min(h, 1080) // 1080
+    return f'{int(height * w / h / 8 + 0.5) * 8}x{height}'
+
+
 # Frame generation (GOW3_FRAME_GEN): FSR 3.1 on any GPU; DLSS Frame Generation for RTX 40/50
 # (the port falls back to FSR 3.1 until it is supported).
 FRAME_GENS = ('off', 'fsr3', 'dlss')
@@ -619,6 +700,8 @@ SHARED_SETTINGS = {
     'quick_menu': (bool, lambda v: '1' if v else '0'),
     'quick_menu_hint': (bool, lambda v: '1' if v else '0'),
     'prompt_style': (int, lambda v: str(int(v))),
+    # Quality mode: the in-game menu switches it live between reduced modes, or for the next start.
+    'upscale_quality': (str, lambda v: v if v in UPSCALE_QUALITIES else 'native'),
 }
 
 
@@ -641,15 +724,16 @@ def load_launcher():
     for key, (kind, _) in SHARED_SETTINGS.items():
         if key in ini:
             try:
-                settings[key] = ini[key] not in ('0', '') if kind is bool else kind(float(ini[key]))
+                settings[key] = (ini[key] not in ('0', '') if kind is bool else ini[key] if kind is str
+                                 else kind(float(ini[key])))
             except ValueError:
                 pass
     # Upscaler / frame generation chosen in the in-game menu (gow3_overlay.cpp UpscalingSection).
     if ini.get('upscaling_from_menu') == '1':
         if ini.get('frame_gen') in FRAME_GENS:
             settings['frame_gen'] = ini['frame_gen']
-        if ini.get('upscaler') in ('fsr3', 'dlss') and settings.get('res_method') != 'patch':
-            settings['res_method'] = 'dlss' if ini['upscaler'] == 'dlss' else 'upscale'
+        if ini.get('upscaler') in ('fsr3', 'fsr4', 'dlss') and settings.get('res_method') != 'patch':
+            settings['res_method'] = {'fsr3': 'upscale'}.get(ini['upscaler'], ini['upscaler'])
         write_keys(SETTINGS_FILE, {'upscaling_from_menu': '0'})
         write_launcher_file(settings)
     return settings
@@ -767,6 +851,132 @@ def prune_logs():
 
 
 # ---------------------------------------------------------------------------------------------
+# Starting the game (both windows: this Tk one and kzsf_web.py).
+
+def game_env(settings, graphics, needs_update):
+    """The game's environment for these options."""
+    env = dict(os.environ)
+    env.update({
+        'GOW3_GAME_DIR': settings['game_dir'],
+        'GOW3_DATA_DIR': str(USER_DIR),
+        'GOW3_USER_DIR': str(PS4_DIR),
+        'GOW3_CONFIG': str(SETTINGS_FILE),
+        'GOW3_WINDOW_SIZE': settings.get('window_size') or '1920x1080',
+        'GOW3_KEY_MAP': map_spec(settings['key_map'], 0),
+        'GOW3_PAD_MAP': map_spec(settings['pad_map'], 1),
+        'PYTHONIOENCODING': 'utf-8',
+        # Sensitivity, fast turns, invert Y, FOV, dead zone, controller speaker and the quick
+        # menu: the game reads them from gow3.ini (SHARED_SETTINGS), live.
+        'GOW3_MOUSE_LOOK': '1' if settings.get('mouse_look', True) else '0',
+        # An "Apply and restart" in the game ends it with code 75: game_ended starts it again.
+        'GOW3_LAUNCHER_RESTART': '1',
+        'GOW3_DISCORD': '1' if DISCORD_ID and settings.get('discord_rpc', True) else '0',
+        'GOW3_DISCORD_ID': DISCORD_ID,
+        'GOW3_DISCORD_DETAILS': DISCORD_DETAILS,
+        'GOW3_DISCORD_IMAGE': DISCORD_IMAGE,
+        'GOW3_SMART_PENDING': '1' if settings.get('smart_pending', True) else '0',
+        # Precompile: every cached pipeline built before the game, on all but two cores.
+        'GOW3_PRECOMPILE': os.environ.get(
+            'GOW3_PRECOMPILE', '1' if settings.get('precompile', True) else '0'),
+        'GOW3_PARALLEL_WARMUP': os.environ.get('GOW3_PARALLEL_WARMUP', '1'),
+        # Performance (2026-10-21 measurements): the two-stage draw pipeline, and libc's copy
+        # routine (0x3d99a2) writing next to a compute shader's output without a GPU readback.
+        # A variable set before the launcher starts (test .bat files) wins.
+        'GOW3_DRAW_PIPE': os.environ.get(
+            'GOW3_DRAW_PIPE', '1' if settings.get('draw_pipe', True) else '0'),
+        'GOW3_NOWAIT_WRITES': os.environ.get(
+            'GOW3_NOWAIT_WRITES', '3d99a2' if settings.get('nowait_writes', True) else ''),
+        # One save folder for every release of the game: switching region keeps the saves.
+        'GOW3_SAVEDATA_ID': TITLE_ID,
+    })
+    # Upscaling method (any saved value but 'patch'): above 1080p the game stays at 1080p (run.py
+    # drops the patch) and FSR 3.1 reaches the output, with the UI and videos drawn at that size.
+    # No host scene proxies (their round trips broke foliage lighting). The port jitters the scene
+    # (its depth pre-pass included) for FSR / DLSS and skips the game's own temporal anti-aliasing
+    # (run.py GOW3_GAME_TAA_PS); GOW3_JITTER=0 in the environment turns the jitter off.
+    output = PORT_OUTPUTS.get(graphics['render_resolution'])
+    method = settings.get('res_method', 'upscale')
+    frame_gen = settings.get('frame_gen') if settings.get('frame_gen') in FRAME_GENS else 'off'
+    # Frame generation at 1080p: FSR / DLSS as anti-aliasing at the game's own size (GOW3_NATIVE_AA),
+    # the path frame generation takes its depth, motion and picture without UI from.
+    # Quality modes (Graphics tab; GOW3_UPSCALE_QUALITY=<mode> overrides it for tests): the 3D
+    # scene renders smaller (src/scene_res_hook.h), the UI and videos stay at the output size.
+    quality = os.environ.get('GOW3_UPSCALE_QUALITY') or settings.get('upscale_quality', 'native')
+    quality = quality if quality in UPSCALE_QUALITIES else 'native'
+    native_aa = graphics['render_resolution'] == 'native' and (
+        frame_gen != 'off' or (quality != 'native' and method != 'patch'))
+    if native_aa:
+        output = '1920x1080'
+    # Quality modes: the scene renders smaller (GOW3_RENDER_RES, read by the loader) and FSR / DLSS
+    # reach the output.
+    render = UPSCALE_RENDER.get(output or '', {}).get(quality, '1920x1080')
+    # Ultrawide: always through the port (the classic patch cannot widen the view); the scene at
+    # the output's shape, Hor+ by the loader.
+    ultrawide = settings.get('ultrawide') if settings.get('ultrawide') in ULTRAWIDE else 'off'
+    if ultrawide != 'off':
+        output, native_aa = ultrawide, False
+        method = method if method != 'patch' else 'upscale'
+        render = ultrawide_scene(ultrawide, quality)
+    if output and (method != 'patch' or native_aa):
+        # DLSS falls back to FSR 3.1 by itself when the card or the DLLs cannot run it.
+        # FSR 4 falls back to FSR 3.1 the same way (no INT8 support, files missing: fsr4_problem).
+        upscaler = {'dlss': 'dlss', 'fsr4': 'fsr4'}.get(method, 'fsr3')
+        env.update({'GOW3_OUTPUT_RES': output, 'GOW3_UPSCALER': upscaler,
+                    'GOW3_FSR4_DIR': os.environ.get('GOW3_FSR4_DIR', str(FSR4_DIR)),
+                    'GOW3_SCENE_NATIVE': '1',
+                    'GOW3_JITTER': os.environ.get('GOW3_JITTER', '1'),
+                    'GOW3_FRAME_GEN': frame_gen})
+        if native_aa:
+            env['GOW3_NATIVE_AA'] = '1'
+        else:
+            env.pop('GOW3_NATIVE_AA', None)
+        if render != '1920x1080':
+            env['GOW3_RENDER_RES'] = render
+        else:
+            env.pop('GOW3_RENDER_RES', None)
+        # The mode this start applies: the in-game menu compares its choice with it.
+        env['GOW3_UPSCALE_QUALITY'] = quality
+    else:
+        # The classic resolution patch and 720p have no port-side frame path: no frame generation.
+        env['GOW3_OUTPUT_RES'] = '1920x1080'
+        env['GOW3_FRAME_GEN'] = 'off'
+        for key in ('GOW3_UPSCALER', 'GOW3_SCENE_NATIVE', 'GOW3_JITTER', 'GOW3_NATIVE_AA', 'GOW3_RENDER_RES'):
+            env.pop(key, None)
+    if graphics['fps_limit'] in EXPERIMENTAL_FPS:
+        env['GOW3_VBLANK_HZ'] = '0'
+        env['GOW3_FPS_LIMIT'] = graphics['fps_limit']
+    else:
+        env.pop('GOW3_VBLANK_HZ', None)
+        env.pop('GOW3_FPS_LIMIT', None)
+    if needs_update and settings['update_dir']:
+        env['GOW3_PATCH_DIR'] = settings['update_dir']
+    else:
+        env.pop('GOW3_PATCH_DIR', None)
+    return env
+
+
+def launch_game(settings, graphics, needs_update):
+    """Saves the options and starts the game: (process, game.log, errors.log, run folder); OSError."""
+    save_graphics(graphics)
+    save_launcher(settings)  # the controls the game reads from gow3.ini (SHARED_SETTINGS)
+    run_dir = LOGS_DIR / time.strftime('%Y-%m-%d_%H-%M-%S')
+    run_dir.mkdir(parents=True, exist_ok=True)
+    prune_logs()
+    adopt_region_saves()
+    env = game_env(settings, graphics, needs_update)
+    out = open(run_dir / 'game.log', 'w', encoding='utf-8')
+    err = open(run_dir / 'errors.log', 'w', encoding='utf-8')
+    try:
+        process = subprocess.Popen(run_command(), cwd=str(PORT_DIR), env=env, stdin=subprocess.DEVNULL,
+                                   stdout=out, stderr=err, creationflags=NO_WINDOW)
+    except OSError:
+        out.close()
+        err.close()
+        raise
+    return process, out, err, run_dir
+
+
+# ---------------------------------------------------------------------------------------------
 # Window.
 
 class Launcher:
@@ -863,6 +1073,7 @@ class Launcher:
 
         self.tabs = [('game', tr('tab_game'), self.game_tab), ('graphics', tr('tab_graphics'), self.graphics_tab),
                      ('controls', tr('tab_controls'), self.controls_tab),
+                     ('cheats', tr('tab_cheats'), self.cheats_tab),
                      ('advanced', tr('tab_advanced'), self.advanced_tab)]
         self.tab_labels = {}
         for key, title, _ in self.tabs:
@@ -1034,6 +1245,44 @@ class Launcher:
                           wraplength=self.px(360)).pack(side='left', padx=self.px(12))
         return combo
 
+    def fsr4_row(self, parent):
+        """FSR 4 files: state and a download button (kzsf_fsr4.py, in the background)."""
+        frame = self.row(parent, tr('fsr4_files'))
+        status = self.tk.Label(frame, bg=PANEL, fg=MUTED, font=self.font(9))
+        busy = []
+
+        def refresh():
+            ready = not kzsf_fsr4.missing(FSR4_DIR)
+            status.configure(text=tr('fsr4_ready') if ready else tr('fsr4_missing'),
+                             fg=ACCENT if ready else MUTED)
+            if ready:
+                button.pack_forget()
+
+        def show(text, color=MUTED):
+            if status.winfo_exists():
+                status.configure(text=text, fg=color)
+
+        def start():
+            if busy:
+                return
+            busy.append(True)
+
+            def work():
+                try:
+                    kzsf_fsr4.download(FSR4_DIR, lambda done, total: self.root.after(
+                        0, lambda: show(tr('fsr4_downloading', done=done, total=total))))
+                    self.root.after(0, lambda: status.winfo_exists() and refresh())
+                except OSError as e:
+                    message = tr('fsr4_failed', error=e)
+                    self.root.after(0, lambda: show(message, ERROR))
+                busy.clear()
+            threading.Thread(target=work, daemon=True).start()
+        button = self.button(frame, tr('fsr4_download'), start)
+        button.pack(side='left', padx=(0, self.px(12)))
+        status.pack(side='left')
+        refresh()
+        self.note(parent, '      ' + tr('fsr4_help'))
+
     def check(self, parent, label, key, help_text=None):
         var = self.tk.BooleanVar(value=self.graphics[key] == '1')
 
@@ -1200,6 +1449,15 @@ class Launcher:
                     ['720p (1280 × 720)', tr('res_native'), '1440p (2560 × 1440)', '1800p (3200 × 1800)',
                      '4K (3840 × 2160)'], self.graphics['render_resolution'],
                     lambda v: self.set_graphic('render_resolution', v), tr('render_res_help'))
+        ultrawide = self.settings.get('ultrawide') if self.settings.get('ultrawide') in ULTRAWIDE else 'off'
+
+        def set_ultrawide(value):
+            self.settings['ultrawide'] = value
+            save_launcher(self.settings)
+        aspects = {'2560x1080': '21:9', '3440x1440': '21:9', '3840x1600': '21:9', '5120x1440': '32:9'}
+        self.choice(parent, tr('ultrawide'), ULTRAWIDE,
+                    [tr('ultrawide_off')] + [f"{s.replace('x', ' × ')} · {aspects[s]}" for s in ULTRAWIDE[1:]],
+                    ultrawide, set_ultrawide, tr('ultrawide_help'))
         self.choice(parent, tr('fps_limit'), FPS_LIMITS,
                     ['30 FPS', '60 FPS', f"144 FPS ({tr('fps_experimental')})",
                      f"240 FPS ({tr('fps_experimental')})", tr('fps_unlimited')],
@@ -1498,6 +1756,20 @@ class Launcher:
             self.images.setdefault('vars', []).append(var)
         self.note(parent, '      ' + tr('perf_help'))
 
+    # -- cheats tab -------------------------------------------------------------------------
+
+    def cheats_tab(self, parent):
+        """The game's own debug switches (gow3.ini cheat_*, which the in-game menu changes live)."""
+        self.heading(parent, tr('cheats'))
+        for key in ('cheat_god', 'cheat_ammo', 'cheat_no_reload', 'cheat_sprint', 'cheat_echo'):
+            self.check(parent, tr(key), key, tr(key + '_help'))
+        self.note(parent, tr('cheats_help'))
+        self.heading(parent, tr('debug'), pady=(18, 6))
+        self.check(parent, tr('cheat_chapters'), 'cheat_chapters', tr('cheat_chapters_help'))
+        frame = self.row(parent, tr('free_camera'))
+        self.tk.Label(frame, text='F9 / F10', bg=PANEL, fg=ACCENT, font=self.font(10, 'bold')).pack(side='left')
+        self.note(parent, tr('free_camera_help'))
+
     def advanced_tab(self, parent):
         self.note(parent, tr('advanced_help'), color=WARN)
         self.tk.Frame(parent, bg=PANEL, height=self.px(8)).pack()
@@ -1529,9 +1801,11 @@ class Launcher:
             self.settings['res_method'] = value
             save_launcher(self.settings)
         self.choice(parent, tr('res_method'), RES_METHODS,
-                    [tr('res_method_upscale'), tr('res_method_dlss'), tr('res_method_patch')],
+                    [tr('res_method_upscale'), tr('res_method_fsr4'), tr('res_method_dlss'),
+                     tr('res_method_patch')],
                     method, set_method)
         self.note(parent, '      ' + tr('res_method_help'))
+        self.fsr4_row(parent)
         self.check(parent, tr('stale_readback'), 'stale_readback')
         self.note(parent, '      ' + tr('stale_help'))
         self.check(parent, tr('deferred_readback'), 'deferred_readback')
@@ -1573,7 +1847,7 @@ class Launcher:
                              mouse_invert=False, mouse_turn_boost=6, smart_pending=True, precompile=True,
                              draw_pipe=True,
                              nowait_writes=True,
-                             res_method='upscale', frame_gen='off',
+                             res_method='upscale', frame_gen='off', ultrawide='off',
                              discord_rpc=True, pad_dead_zone=0, pad_speaker=100, fov=100,
                              quick_menu=True, quick_menu_hint=True)
         save_launcher(self.settings)
@@ -1675,102 +1949,8 @@ class Launcher:
             self.messagebox.showwarning('Killzone Shadow Fall', f'{message}\n\n{tr("fix_folder")}', parent=self.root)
             self.show_tab('game')
             return
-        save_graphics(self.graphics)
-        save_launcher(self.settings)  # the controls the game reads from gow3.ini (SHARED_SETTINGS)
-        run_dir = LOGS_DIR / time.strftime('%Y-%m-%d_%H-%M-%S')
-        run_dir.mkdir(parents=True, exist_ok=True)
-        prune_logs()
-        adopt_region_saves()
-        env = dict(os.environ)
-        env.update({
-            'GOW3_GAME_DIR': self.settings['game_dir'],
-            'GOW3_DATA_DIR': str(USER_DIR),
-            'GOW3_USER_DIR': str(PS4_DIR),
-            'GOW3_CONFIG': str(SETTINGS_FILE),
-            'GOW3_WINDOW_SIZE': self.settings.get('window_size') or '1920x1080',
-            'GOW3_KEY_MAP': map_spec(self.settings['key_map'], 0),
-            'GOW3_PAD_MAP': map_spec(self.settings['pad_map'], 1),
-            'PYTHONIOENCODING': 'utf-8',
-            # Sensitivity, fast turns, invert Y, FOV, dead zone, controller speaker and the quick
-            # menu: the game reads them from gow3.ini (SHARED_SETTINGS), live.
-            'GOW3_MOUSE_LOOK': '1' if self.settings.get('mouse_look', True) else '0',
-            # An "Apply and restart" in the game ends it with code 75: game_ended starts it again.
-            'GOW3_LAUNCHER_RESTART': '1',
-            'GOW3_DISCORD': '1' if DISCORD_ID and self.settings.get('discord_rpc', True) else '0',
-            'GOW3_DISCORD_ID': DISCORD_ID,
-            'GOW3_DISCORD_DETAILS': DISCORD_DETAILS,
-            'GOW3_DISCORD_IMAGE': DISCORD_IMAGE,
-            'GOW3_SMART_PENDING': '1' if self.settings.get('smart_pending', True) else '0',
-            # Precompile: every cached pipeline built before the game, on all but two cores.
-            'GOW3_PRECOMPILE': os.environ.get(
-                'GOW3_PRECOMPILE', '1' if self.settings.get('precompile', True) else '0'),
-            'GOW3_PARALLEL_WARMUP': os.environ.get('GOW3_PARALLEL_WARMUP', '1'),
-            # Performance (2026-10-21 measurements): the two-stage draw pipeline, and libc's copy
-            # routine (0x3d99a2) writing next to a compute shader's output without a GPU readback.
-            # A variable set before the launcher starts (test .bat files) wins.
-            'GOW3_DRAW_PIPE': os.environ.get(
-                'GOW3_DRAW_PIPE', '1' if self.settings.get('draw_pipe', True) else '0'),
-            'GOW3_NOWAIT_WRITES': os.environ.get(
-                'GOW3_NOWAIT_WRITES', '3d99a2' if self.settings.get('nowait_writes', True) else ''),
-            # One save folder for every release of the game: switching region keeps the saves.
-            'GOW3_SAVEDATA_ID': TITLE_ID,
-        })
-        # Upscaling method (any saved value but 'patch'): above 1080p the game stays at 1080p (run.py
-        # drops the patch) and FSR 3.1 reaches the output, with the UI and videos drawn at that size.
-        # No host scene proxies (their round trips broke foliage lighting). The port jitters the scene
-        # (its depth pre-pass included) for FSR / DLSS and skips the game's own temporal anti-aliasing
-        # (run.py GOW3_GAME_TAA_PS); GOW3_JITTER=0 in the environment turns the jitter off.
-        output = PORT_OUTPUTS.get(self.graphics['render_resolution'])
-        method = self.settings.get('res_method', 'upscale')
-        frame_gen = self.settings.get('frame_gen') if self.settings.get('frame_gen') in FRAME_GENS else 'off'
-        # Frame generation at 1080p: FSR / DLSS as anti-aliasing at the game's own size (GOW3_NATIVE_AA),
-        # the path frame generation takes its depth, motion and picture without UI from.
-        # Quality modes (Graphics tab; GOW3_UPSCALE_QUALITY=<mode> overrides it for tests): the 3D
-        # scene renders smaller (src/scene_res_hook.h), the UI and videos stay at the output size.
-        quality = os.environ.get('GOW3_UPSCALE_QUALITY') or self.settings.get('upscale_quality', 'native')
-        quality = quality if quality in UPSCALE_QUALITIES else 'native'
-        native_aa = self.graphics['render_resolution'] == 'native' and (
-            frame_gen != 'off' or (quality != 'native' and method != 'patch'))
-        if native_aa:
-            output = '1920x1080'
-        # Quality modes: the scene renders smaller (GOW3_RENDER_RES, read by the loader) and FSR / DLSS
-        # reach the output.
-        render = UPSCALE_RENDER.get(output or '', {}).get(quality, '1920x1080')
-        if output and (method != 'patch' or native_aa):
-            # DLSS falls back to FSR 3.1 by itself when the card or the DLLs cannot run it.
-            env.update({'GOW3_OUTPUT_RES': output, 'GOW3_UPSCALER': 'dlss' if method == 'dlss' else 'fsr3',
-                        'GOW3_SCENE_NATIVE': '1',
-                        'GOW3_JITTER': os.environ.get('GOW3_JITTER', '1'),
-                        'GOW3_FRAME_GEN': frame_gen})
-            if native_aa:
-                env['GOW3_NATIVE_AA'] = '1'
-            else:
-                env.pop('GOW3_NATIVE_AA', None)
-            if render != '1920x1080':
-                env['GOW3_RENDER_RES'] = render
-            else:
-                env.pop('GOW3_RENDER_RES', None)
-        else:
-            # The classic resolution patch and 720p have no port-side frame path: no frame generation.
-            env['GOW3_OUTPUT_RES'] = '1920x1080'
-            env['GOW3_FRAME_GEN'] = 'off'
-            for key in ('GOW3_UPSCALER', 'GOW3_SCENE_NATIVE', 'GOW3_JITTER', 'GOW3_NATIVE_AA', 'GOW3_RENDER_RES'):
-                env.pop(key, None)
-        if self.graphics['fps_limit'] in EXPERIMENTAL_FPS:
-            env['GOW3_VBLANK_HZ'] = '0'
-            env['GOW3_FPS_LIMIT'] = self.graphics['fps_limit']
-        else:
-            env.pop('GOW3_VBLANK_HZ', None)
-            env.pop('GOW3_FPS_LIMIT', None)
-        if needs_update and self.settings['update_dir']:
-            env['GOW3_PATCH_DIR'] = self.settings['update_dir']
-        else:
-            env.pop('GOW3_PATCH_DIR', None)
         try:
-            out = open(run_dir / 'game.log', 'w', encoding='utf-8')
-            err = open(run_dir / 'errors.log', 'w', encoding='utf-8')
-            self.process = subprocess.Popen(run_command(), cwd=str(PORT_DIR), env=env, stdin=subprocess.DEVNULL,
-                                            stdout=out, stderr=err, creationflags=NO_WINDOW)
+            self.process, out, err, run_dir = launch_game(self.settings, self.graphics, needs_update)
         except OSError as error:
             self.process = None
             self.messagebox.showerror('Killzone Shadow Fall', tr('cant_start', error=error), parent=self.root)
@@ -1837,6 +2017,16 @@ def main():
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Lesca.KillzoneShadowFall')
         except (AttributeError, OSError):
             pass
+    # The new window (kzsf_web.py: HTML in Edge WebView2, part of Windows 10 and 11). Without
+    # WebView2, or with KZSF_LAUNCHER_UI=tk, this Tk window opens as before.
+    if WINDOWS and os.environ.get('KZSF_LAUNCHER_UI', '').lower() != 'tk':
+        try:
+            import kzsf_web
+            if kzsf_web.run(sys.modules[__name__]):
+                return
+        except Exception:  # noqa: BLE001  (any failure of the new window: the Tk one still works)
+            import traceback
+            traceback.print_exc()
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
     root = tk.Tk()

@@ -75,11 +75,6 @@ int main(int argc, char** argv) {
     hook(player.data(), 110);
     std::memcpy(&balance, player.data() + 0x1e8, 4);
     assert(balance == 120);
-    settings.cheats[4] = true;
-    assert(gow3_orbs_gain(player.data(), 130) == 140);
-    gow3_cheat_status(4);
-    assert(gow3_orbs_gain(player.data(), 130) == 130);
-    settings.cheats[4] = false;
     assert(gow3_orbs_gain(player.data(), 130) == 140);
     settings.red_orb_multiplier = 100;
     hook(player.data(), 90);
@@ -109,6 +104,11 @@ int main(int argc, char** argv) {
     Gow3Settings::Load();
     assert(settings.red_orb_multiplier == 0.125f);
     assert(settings.cheats[0] && settings.cheats[2] && !settings.cheats[1] && !settings.cheats[4]);
+    settings.cheats[GOW3_CHEAT_FREE_CAMERA] = true;  // never saved: the free camera starts off
+    Gow3Settings::Save();
+    settings.cheats[GOW3_CHEAT_FREE_CAMERA] = false;
+    Gow3Settings::Load();
+    assert(!settings.cheats[GOW3_CHEAT_FREE_CAMERA]);
     assert(std::filesystem::remove(config));
 #ifdef _WIN32
     VirtualFree(stub, 0, MEM_RELEASE);

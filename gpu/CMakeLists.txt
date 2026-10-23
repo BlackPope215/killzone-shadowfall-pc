@@ -406,8 +406,6 @@ add_executable(perf-overlay-test EXCLUDE_FROM_ALL ../tests/test_perf_overlay.cpp
     shim/gow3_settings.cpp)
 target_include_directories(perf-overlay-test PRIVATE shim)
 target_compile_options(perf-overlay-test PRIVATE -UNDEBUG)
-add_executable(cheat-hooks-test EXCLUDE_FROM_ALL ../tests/test_cheat_hooks.cpp)
-target_compile_options(cheat-hooks-test PRIVATE -UNDEBUG)
 add_executable(signatures-test EXCLUDE_FROM_ALL ../tests/test_signatures.cpp)
 target_compile_options(signatures-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_executable(readback-queue-test EXCLUDE_FROM_ALL ../tests/test_readback_queue.cpp)

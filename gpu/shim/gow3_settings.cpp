@@ -53,12 +53,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         return;
     }
     if (key == "menu_tab") {
-        v.menu_tab = i >= 0 && i <= 3 ? i : 0;
+        v.menu_tab = i >= 0 && i <= 4 ? i : 0;
         return;
     }
-    const char* cheat_keys[] = {"cheat_health", "cheat_magic", "cheat_item", "cheat_rage", "cheat_orbs",
-                                "cheat_very_hard", "cheat_double_jumps"};
-    for (unsigned cheat = 0; cheat < GOW3_CHEAT_COUNT; ++cheat) {
+    // The free camera (GOW3_CHEAT_FREE_CAMERA) always starts off: it has no key.
+    const char* cheat_keys[] = {"cheat_god", "cheat_ammo", "cheat_no_reload", "cheat_sprint", "cheat_echo",
+                                "cheat_chapters"};
+    static_assert(sizeof(cheat_keys) / sizeof(cheat_keys[0]) == GOW3_CHEAT_FREE_CAMERA);
+    for (unsigned cheat = 0; cheat < GOW3_CHEAT_FREE_CAMERA; ++cheat) {
         if (key == cheat_keys[cheat]) {
             v.cheats[cheat] = i != 0;
             return;
@@ -159,6 +161,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.film_grain = value.empty() || i != 0;
     } else if (key == "camera_shake") {
         v.camera_shake = value.empty() || i != 0;
+    } else if (key == "upscale_quality") {
+        for (int q = 0; q < UpscaleQualityCount; ++q) {
+            if (value == UpscaleQualityKeys[q]) v.upscale_quality = q;
+        }
     } else if (key == "upscaling_from_menu") {
         v.upscaling_from_menu = i != 0;
     } else if (key == "restart_unconfirmed") {
@@ -241,7 +247,7 @@ void Load() {
         {"GOW3_QUICK_MENU_HINT", "quick_menu_hint"},
         {"GOW3_MOTION_BLUR", "motion_blur"},          {"GOW3_DEPTH_OF_FIELD", "depth_of_field"},
         {"GOW3_BLOOM", "bloom"},                      {"GOW3_FILM_GRAIN", "film_grain"},
-        {"GOW3_CAMERA_SHAKE", "camera_shake"},
+        {"GOW3_CAMERA_SHAKE", "camera_shake"},        {"GOW3_UPSCALE_QUALITY", "upscale_quality"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env); value && value[0]) {
@@ -266,6 +272,7 @@ void Load() {
     v.startup_depth_of_field = v.depth_of_field;
     v.startup_bloom = v.bloom;
     v.startup_film_grain = v.film_grain;
+    v.startup_upscale_quality = v.upscale_quality;
 }
 
 bool EffectsNeedRestart() {
@@ -355,11 +362,11 @@ void Save() {
     std::fprintf(file, "green_orb_multiplier=%.3f\n", v.green_orb_multiplier.load());
     std::fprintf(file, "blue_orb_multiplier=%.3f\n", v.blue_orb_multiplier.load());
     std::fprintf(file, "gold_orb_multiplier=%.3f\n", v.gold_orb_multiplier.load());
-    std::fprintf(file, "cheat_health=%d\ncheat_magic=%d\ncheat_item=%d\ncheat_rage=%d\ncheat_orbs=%d\n"
-                       "cheat_very_hard=%d\ncheat_double_jumps=%d\n",
-                 int(v.cheats[0].load()), int(v.cheats[1].load()), int(v.cheats[2].load()),
-                 int(v.cheats[3].load()), int(v.cheats[4].load()),
-                 int(v.cheats[5].load()), int(v.cheats[6].load()));
+    std::fprintf(file, "cheat_god=%d\ncheat_ammo=%d\ncheat_no_reload=%d\ncheat_sprint=%d\ncheat_echo=%d\n"
+                       "cheat_chapters=%d\n",
+                 int(v.cheats[GOW3_CHEAT_GOD].load()), int(v.cheats[GOW3_CHEAT_AMMO].load()),
+                 int(v.cheats[GOW3_CHEAT_NO_RELOAD].load()), int(v.cheats[GOW3_CHEAT_SPRINT].load()),
+                 int(v.cheats[GOW3_CHEAT_ECHO].load()), int(v.cheats[GOW3_CHEAT_CHAPTERS].load()));
     std::fprintf(file, "enemy_health_bar=%d\n", int(v.enemy_health_bar.load()));
     std::fprintf(file,
                  "overlay_fps=%d\noverlay_frametime=%d\noverlay_upscaler=%d\noverlay_gpu=%d\n"
@@ -391,6 +398,8 @@ void Save() {
     std::fprintf(file, "motion_blur=%d\ndepth_of_field=%d\nbloom=%d\nfilm_grain=%d\ncamera_shake=%d\n",
                  int(v.motion_blur.load()), int(v.depth_of_field.load()), int(v.bloom.load()),
                  int(v.film_grain.load()), int(v.camera_shake.load()));
+    std::fprintf(file, "upscale_quality=%s\n",
+                 UpscaleQualityKeys[std::clamp(v.upscale_quality.load(), 0, UpscaleQualityCount - 1)]);
     std::fprintf(file, "frame_gen=%s\nframe_gen_multiplier=%d\n", FrameGenName(v.frame_gen),
                  v.frame_gen_multiplier.load());
     // Read by run.sh at start.

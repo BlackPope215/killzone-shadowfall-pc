@@ -24,7 +24,7 @@ export USERPROFILE=${USERPROFILE:-$(cygpath -w "/c/Users/$(id -un)")}
 if [[ ! -x out/pyenv/Scripts/python.exe ]]; then
     "$python" -m venv out/pyenv
 fi
-out/pyenv/Scripts/python.exe -m pip install -q --disable-pip-version-check pyinstaller pillow iced-x86==1.21.0
+out/pyenv/Scripts/python.exe -m pip install -q --disable-pip-version-check pyinstaller pillow iced-x86==1.21.0 pywebview==6.2.1
 # The scripts run inside the launcher executable (--script): the standard modules they import come along.
 hidden=()
 for module in argparse base64 collections hashlib json re shutil socket struct tempfile threading uuid \
@@ -34,6 +34,7 @@ done
 out/pyenv/Scripts/python.exe -m PyInstaller --noconfirm --clean --log-level WARN --windowed --copy-metadata pillow \
     --name "$name" --icon "$(cygpath -w "$PWD/launcher/kzsf.ico")" --distpath out/kzsf-pyi-dist \
     --workpath out/kzsf-pyi-work --specpath out/kzsf-pyi-work --paths "$(cygpath -w "$PWD/scripts")" "${hidden[@]}" \
+    --add-data "$(cygpath -w "$PWD/launcher/web");web" --hidden-import kzsf_web \
     "$(cygpath -w "$PWD/launcher/kzsf_launcher.py")"
 
 dest="out/kzsf-stage/$name"
@@ -65,11 +66,29 @@ cp run.py LICENSE "$dest/"
 # The render resolution patches (tools/make_kzsf_res_patches.py): our own file, no game data.
 cp patches/Killzone_Shadow_Fall.xml "$dest/patches/"
 cp packaging/windows/LEEME-README.txt "$dest/LEEME - README.txt"
+# The classic (Tk) launcher window, for PCs where the new one does not work.
+cp "packaging/windows/Classic launcher.bat" "$dest/"
+# FSR 4: the fixed and faster passes (tools/fsr4_optimize.sh: no data race in pass 11 at 1080p,
+# post passes ~3.5x faster), built here from AMD's MIT-licensed model (FireBurn/Q2RTX build) with
+# spirv-cross and glslang; players cannot build them. The launcher downloads the original files
+# next to them (launcher/kzsf_fsr4.py); vk_fsr4.cpp prefers opt/.
+bash tools/fetch_fsr4_assets.sh
+opt_count=$(ls fsr4_shaders/opt/*.spv 2>/dev/null | wc -l)
+if [[ $opt_count != 24 ]]; then
+    echo "fsr4_shaders/opt holds $opt_count passes, 24 expected (spirv-cross and glslangValidator needed)" >&2
+    exit 1
+fi
+mkdir -p "$dest/fsr4_shaders/opt"
+cp fsr4_shaders/opt/*.spv "$dest/fsr4_shaders/opt/"
+cp fsr4_shaders/LICENSE-FSR4-v07.txt "$dest/fsr4_shaders/"
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
+# pythonnet's API documentation (the launcher window's pywebview): not needed, and an .xml.
+rm -f "$dest/_internal/pythonnet/runtime/Python.Runtime.xml"
 # No game files and nothing a player made (saves, caches, settings, logs) may ship.
 forbidden=$(find "$dest" \( -iname eboot.bin -o -iname sce_module -o -iname sce_sys -o -iname savedata \
     -o -iname user -o -iname cache -o -iname '*.log' -o -iname '*.ini' -o -iname launcher.json \
-    -o -iname '*.spv' -o -iname '*.pkg' -o -iname '*.sprx' -o -iname '*.prx' -o \( -iname '*.xml' -not -path "$dest/patches/Killzone_Shadow_Fall.xml" \) \) -print)
+    -o \( -path "$dest/fsr4_shaders/*" -not -path "$dest/fsr4_shaders/opt/*" -not -name LICENSE-FSR4-v07.txt -not -name opt \) \
+    -o \( -iname '*.spv' -not -path "$dest/fsr4_shaders/opt/*" \) -o -iname '*.pkg' -o -iname '*.sprx' -o -iname '*.prx' -o \( -iname '*.xml' -not -path "$dest/patches/Killzone_Shadow_Fall.xml" \) \) -print)
 if [[ -n $forbidden ]]; then
     echo "Package holds files that must not ship:" >&2
     echo "$forbidden" >&2
@@ -81,7 +100,8 @@ rm -f "$zip"
 (cd out/kzsf-stage && powershell -NoProfile -Command \
     "Compress-Archive -Path '$name' -DestinationPath '../../$zip'")
 
-# Refresh dist/<name> (a playable copy), keeping what the player made there (user/).
+# Refresh dist/<name> (a playable copy), keeping what the player made there (user/) and the
+# downloaded FSR 4 shaders (launcher/kzsf_fsr4.py).
 play="dist/$name"
 running=$(powershell -NoProfile -Command \
     "@(Get-Process | Where-Object { \$_.Path -like '$(cygpath -w "$PWD/$play")\\*' }).Count" | tr -d '\r')
@@ -89,7 +109,7 @@ if [[ ${running:-0} != 0 ]]; then
     echo "$play is in use ($running processes): not refreshed; the zip is ready." >&2
 else
     mkdir -p "$play"
-    find "$play" -mindepth 1 -maxdepth 1 ! -name user -exec rm -rf {} +
+    find "$play" -mindepth 1 -maxdepth 1 ! -name user ! -name fsr4_shaders -exec rm -rf {} +
     cp -r "$dest/." "$play/"
 fi
 du -sh "$dest" "$zip"

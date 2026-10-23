@@ -183,6 +183,7 @@ static float mouse_vx, mouse_vy;
 static uint64_t mouse_last_us, wheel_until_us[2];
 /* The live controls, refreshed at every pad sample. */
 static Gow3InputSettings input={.mouse_sens=1.0f,.mouse_turn_boost=6.0f,.quick_menu=1};
+static int free_camera; /* runtime_pad_free_camera */
 static float env_float(const char *name, float fallback) {
     const char *v=getenv(name);
     float f=v && *v ? (float)atof(v) : fallback;
@@ -468,6 +469,15 @@ static void sample_host(PadData *d) {
             }
         }
     }
+    /* Free camera: the game gets a neutral pad (the quick menu above still opens) and the mouse
+     * is left to runtime_pad_free_camera_input. */
+    if (__atomic_load_n(&free_camera,__ATOMIC_RELAXED)) {
+        d->buttons=0; d->l2=d->r2=0; d->touch_count=0;
+        d->left_x=d->left_y=d->right_x=d->right_y=128;
+        mouse_vx=mouse_vy=mouse_raw_vx=mouse_raw_vy=0.0f;
+        mouse_last_us=0;
+        return;
+    }
     /* The keyboard works with or without a gamepad: its buttons add to the pad's, and a stick
      * follows the keys only while one of them is held. */
     if (!k) return;
@@ -539,6 +549,64 @@ static void sample_host(PadData *d) {
     if (d->buttons & BTN_R2) d->r2=255;
     key_axis(&d->left_x,k[SDL_SCANCODE_A],k[SDL_SCANCODE_D]);
     key_axis(&d->left_y,k[SDL_SCANCODE_W],k[SDL_SCANCODE_S]);
+}
+
+void runtime_pad_free_camera(int active) { __atomic_store_n(&free_camera,active!=0,__ATOMIC_RELAXED); }
+
+/* Keyboard: WASD move, Q/E down/up, arrows look, Shift faster, Ctrl slower. Mouse: look (the
+ * menu's sensitivity and invert). Gamepad: left stick moves, right stick looks, L1/R1 down/up,
+ * R2 faster, L2 slower. */
+int runtime_pad_free_camera_input(float move[3], float look[4], float *speed, unsigned *keys) {
+    static int f9_was_down, f10_was_down;
+    memset(move,0,3*sizeof(float)); memset(look,0,4*sizeof(float));
+    *speed=4.0f; *keys=0;
+    if (!SDL_WasInit(SDL_INIT_VIDEO)) return 0;
+    const bool *k=SDL_GetKeyboardState(NULL);
+    const int f9=k[SDL_SCANCODE_F9], f10=k[SDL_SCANCODE_F10];
+    const int allowed=SDL_GetKeyboardFocus()!=NULL && !gow3gpu_overlay_captures_input();
+    if (allowed && f9 && !f9_was_down) *keys|=1;
+    if (allowed && f10 && !f10_was_down) *keys|=2;
+    f9_was_down=f9; f10_was_down=f10;
+    if (!__atomic_load_n(&free_camera,__ATOMIC_RELAXED)) return 0; /* the mouse stays the game's */
+    float mdx=0, mdy=0;
+    uint32_t mbuttons=0;
+    int wheel=0;
+    const int captured=gow3gpu_mouse_sample(&mdx,&mdy,&mbuttons,&wheel); /* taken even when unused */
+    if (!allowed) return 0;
+    move[0]=(float)(k[SDL_SCANCODE_D]-k[SDL_SCANCODE_A]);
+    move[1]=(float)(k[SDL_SCANCODE_E]-k[SDL_SCANCODE_Q]);
+    move[2]=(float)(k[SDL_SCANCODE_W]-k[SDL_SCANCODE_S]);
+    look[2]=1.5f*(k[SDL_SCANCODE_RIGHT]-k[SDL_SCANCODE_LEFT]);
+    look[3]=1.5f*(k[SDL_SCANCODE_UP]-k[SDL_SCANCODE_DOWN]);
+    if (captured) {
+        const float gain=0.0025f*input.mouse_sens;
+        look[0]=mdx*gain;
+        look[1]=(input.mouse_invert ? mdy : -mdy)*gain;
+    }
+    float fast=k[SDL_SCANCODE_LSHIFT]||k[SDL_SCANCODE_RSHIFT] ? 1.0f : 0.0f;
+    float slow=k[SDL_SCANCODE_LCTRL]||k[SDL_SCANCODE_RCTRL] ? 1.0f : 0.0f;
+    pthread_mutex_lock(&lock);
+    SDL_Gamepad *g=current_gamepad();
+    if (g) {
+        const float dead=0.15f;
+        float a[4];
+        static const SDL_GamepadAxis axes[4]={SDL_GAMEPAD_AXIS_LEFTX,SDL_GAMEPAD_AXIS_LEFTY,
+                                              SDL_GAMEPAD_AXIS_RIGHTX,SDL_GAMEPAD_AXIS_RIGHTY};
+        for (int i=0;i<4;++i) {
+            a[i]=SDL_GetGamepadAxis(g,axes[i])/32767.0f;
+            a[i]=a[i]>dead ? (a[i]-dead)/(1.0f-dead) : a[i]<-dead ? (a[i]+dead)/(1.0f-dead) : 0.0f;
+        }
+        move[0]+=a[0]; move[2]-=a[1];
+        move[1]+=(float)(SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)-
+                         SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
+        look[2]+=2.5f*a[2];
+        look[3]-=2.5f*(input.mouse_invert ? -a[3] : a[3]);
+        fast=SDL_max(fast,SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)/32767.0f);
+        slow=SDL_max(slow,SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFT_TRIGGER)/32767.0f);
+    }
+    pthread_mutex_unlock(&lock);
+    *speed=4.0f*(1.0f+3.0f*fast)*(1.0f-0.85f*slow);
+    return 1;
 }
 
 /* GOW3_PAD_FILE=<file>: scripted input for automated runs. The file holds whitespace-separated

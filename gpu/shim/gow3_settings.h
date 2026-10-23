@@ -99,6 +99,14 @@ struct Values {
     bool startup_motion_blur = true, startup_depth_of_field = true, startup_bloom = true,
          startup_film_grain = true;
     std::atomic<bool> camera_shake{true};
+    /// Upscaler quality mode (UpscaleQualityKeys): the 3D scene size under FSR / DLSS. Live between
+    /// the reduced modes once the game started in one (src/scene_res_hook.h); Native and the
+    /// first change from Native take a restart (the launcher sets GOW3_RENDER_RES).
+    std::atomic<int> upscale_quality{0};
+    int startup_upscale_quality = 0;
+    /// The scene size the game's targets were last made with (the hook's applied size), 0 without
+    /// the live hook: the upscaler follows a new render size only when it is this one.
+    std::atomic<int> scene_applied_width{0}, scene_applied_height{0};
     int startup_frame_gen = 0;
     // Startup: run.py turns them into patches and environment variables; "Apply and restart".
     std::atomic<int> render_resolution{0};
@@ -146,6 +154,38 @@ struct Values {
 };
 
 Values& Get();
+
+/// gow3.ini / launcher names of the upscaler quality modes (launcher UPSCALE_QUALITIES).
+inline constexpr const char* UpscaleQualityKeys[] = {"native", "quality", "balanced", "performance", "ultra"};
+inline constexpr int UpscaleQualityCount = 5;
+/// The scene size of a quality mode at an output size, as the launcher's UPSCALE_RENDER (outputs
+/// without a row, and Native, give 1920x1080).
+struct SceneSize { int width, height; };
+inline SceneSize UpscaleSceneSize(int quality, int output_width, int output_height) {
+    struct Row { int width, height; SceneSize sizes[4]; };
+    static constexpr Row rows[] = {
+        {1920, 1080, {{1280, 720}, {1120, 630}, {960, 540}, {640, 360}}},
+        {2560, 1440, {{1708, 960}, {1488, 836}, {1280, 720}, {852, 480}}},
+        {3200, 1800, {{1920, 1080}, {1856, 1044}, {1600, 900}, {1066, 600}}},
+        {3840, 2160, {{1920, 1080}, {1920, 1080}, {1920, 1080}, {1280, 720}}},
+    };
+    for (const Row& row : rows) {
+        if (quality > 0 && quality < UpscaleQualityCount && row.width == output_width && row.height == output_height) {
+            return row.sizes[quality - 1];
+        }
+    }
+    // Ultrawide outputs (wider than 16:9; launcher ultrawide_scene): the scene keeps the output's
+    // shape at 1080 lines at most (taller scenes brought lighting artefacts), the modes at the 1080p
+    // heights; the width a multiple of 8.
+    if (output_height > 0 && output_width * 9 > output_height * 16 * 101 / 100) {
+        static constexpr int heights[UpscaleQualityCount] = {1080, 720, 630, 540, 360};
+        const int base = output_height < 1080 ? output_height : 1080;
+        const int h = heights[quality > 0 && quality < UpscaleQualityCount ? quality : 0] * base / 1080;
+        const int w = int(double(h) * output_width / output_height / 8.0 + 0.5) * 8;
+        return {w, h};
+    }
+    return {1920, 1080};
+}
 
 /// Reads the file, then the environment overrides. Called once at start.
 void Load();
