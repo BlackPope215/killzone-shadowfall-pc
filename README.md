@@ -17,6 +17,9 @@ Native Windows port of **Killzone Shadow Fall** (PS4). The game's code runs dire
 graphics are translated to Vulkan in real time. **Public beta:** the whole campaign is playable,
 and it keeps improving with every report.
 
+> 🆕 **0.5.0:** ✨ **FSR 4** · 🎚️ change the **upscaler quality in game** · 🖥️ **ultrawide** 21:9 / 32:9 ·
+> 🎮 **cheats**, **all chapters** and **free camera** · 🧰 **new launcher**.
+
 > ⚠️ **No game files are included.** You need your own dumped copy of the game, **version 01.81**:
 > **CUSA00190** (the tested one) or another region (see [Game versions](#-game-versions)). This
 > project is not affiliated with Sony Interactive Entertainment or Guerrilla Games. Killzone is a
@@ -71,6 +74,7 @@ stick dead zone, vibration and controller speaker volume.
 | **Esc** · **Circle / B** | Closes the menu |
 | **L1 / R1** · **Q / E** | Switch menu tabs |
 | **F12** | Screenshot (`user\ps4\screenshots`) |
+| **F9** · **F10** | Free camera on / off · back to the player ([Cheats](#-cheats-debug-and-free-camera)) |
 | **Alt + F4** | Closes the game |
 
 ## ✨ Features
@@ -117,7 +121,8 @@ the same values.
 | | Button prompts: last device used / keyboard and mouse / PS4 | 🔄 Restart |
 | 🖼️ **Image** | Display mode (window / borderless / fullscreen), VSync | ⚡ Live |
 | | FSR 1 upscaling, sharpening (RCAS) and its strength | ⚡ Live |
-| | Upscaler **FSR 3.1 / DLSS** *(when the game started with one)* | ⚡ Live |
+| | Upscaler **FSR 3.1 / FSR 4 / DLSS** *(when the game started with one)* | ⚡ Live |
+| | **Upscaling quality** (Quality, Balanced, Performance, Ultra performance) | ⚡ Live · 🔄 restart from / to Native |
 | | **Frame generation** Off / FSR 3.1 / DLSS | ⚡ Live · 🔄 restart to turn it on from Off |
 | | Texture sharpness (LOD bias, -2 to +2) | ⚡ Live |
 | | Anisotropic filtering | 🔄 Restart |
@@ -125,6 +130,7 @@ the same values.
 | 🚀 **Performance** | Frame rate limit, frames queued, background shader compiling | ⚡ Live |
 | | GPU readback options (the 0.2.5 performance options) | 🔄 Restart |
 | 📊 **Overlay** | FPS, frame time, upscaler, GPU, CPU, RAM, VRAM · size, corner, opacity | ⚡ Live |
+| 🎮 **Cheats** | God mode, infinite ammo, no reload, unlimited sprint, Tactical Echo, all chapters, free camera | ⚡ Live |
 
 - 🔄 **Apply and restart:** options marked *restart* show a button that closes the game and the
   launcher starts it again by itself with the new settings (unsaved progress since your last
@@ -144,13 +150,30 @@ the same values.
 
 ### 🖥️ Resolution, upscaling and frame generation
 
-- **Above 1080p with AMD FSR 3.1 or NVIDIA DLSS** (1440p, 1800p, 4K): the game renders at 1080p and
-  the upscaler takes it to your resolution; HUD, menus and videos are drawn sharp at full size.
+- **Above 1080p with AMD FSR 3.1, AMD FSR 4 or NVIDIA DLSS** (1440p, 1800p, 4K): the game renders at
+  1080p and the upscaler takes it to your resolution; HUD, menus and videos are drawn sharp at full size.
 - **Sharp and stable:** sub-pixel jitter and the game's own per-pixel motion vectors, so the weapon,
   moving objects and the camera are tracked correctly.
 - **Frame generation:** **AMD FSR 3.1** on any GPU, **NVIDIA DLSS** on GeForce RTX 40/50 (up to 4x
   on RTX 50). Almost twice the frames on screen with sharp HUD and text.
 - Classic method (a game resolution patch) still under *Advanced*.
+
+### ✨ AMD FSR 4
+
+AMD's AI upscaler: a **sharper and more stable image than FSR 3.1**, at a slightly higher GPU cost.
+
+1. Launcher → **Graphics → Upscaling → Method** → **AMD FSR 4 (best quality)**.
+2. In the **FSR 4 files** row press **Download** (once, about 30 MB, ~1 minute) until it says **Installed**.
+3. Press **PLAY**. In game, **Insert → Image → Upscaler** switches between FSR 3.1 / FSR 4 / DLSS.
+
+| | |
+|---|---|
+| 🎮 **Cards** | Vulkan 1.3 with 8-bit integers: **GeForce RTX 20 or newer, Radeon RX 6000 / 7000 / 9000, Intel Arc** |
+| 🔁 **Fallback** | Without the files or on another card, the game uses **FSR 3.1** |
+| 📦 **Files** | From [FireBurn/Q2RTX](https://github.com/FireBurn/Q2RTX), built from AMD's FidelityFX code (MIT). The zip already ships our optimized passes |
+
+> ⏳ When you **enter a level** or **reload a checkpoint**, FSR 4 can **freeze the game for 3-4 seconds
+> the first time** while it prepares its AI model. It isn't a crash: wait and it continues.
 
 ### 🎚️ Upscaling quality modes
 
@@ -170,9 +193,21 @@ rebuild it up to your output resolution. **HUD, menus and videos stay sharp at f
 | Your **graphics card is the limit**: modest GPU, or 1440p / 1800p / 4K with the GPU near 100% | Your **processor is the limit** (low FPS while the GPU is under 100%): fewer pixels don't help the CPU |
 | You want more FPS and accept a slightly softer image | Your GPU already holds the FPS you want: **Native** looks best |
 
-It needs **FSR 3.1 or DLSS** as the resolution method (*Advanced → Resolution method*) or frame
-generation on, and it is read when the game starts. **Insert → Image** shows the sizes in use
+It needs **FSR 3.1, FSR 4 or DLSS** as the method (*Graphics → Upscaling*) or frame generation on.
+🎚️ **Change it in game** with **Insert → Image → Upscaling quality**: between the reduced modes it
+applies ⚡ **live**; from or to **Native** use **Apply and restart**. The menu shows the sizes in use
 (*"WxH scene, WxH output"*).
+
+### 🖥️ Ultrawide 21:9 and 32:9 (beta)
+
+*Launcher → Graphics → Display → **Ultrawide (beta)***: **2560 × 1080**, **3440 × 1440**, **3840 × 1600**
+(21:9) and **5120 × 1440** (32:9).
+
+- 🔭 **Hor+:** the picture fills the screen and you **see more at the sides**, nothing stretched.
+- 🎯 **HUD, menus and videos** stay in the middle at 16:9.
+- ⚙️ Uses FSR / DLSS (it replaces the render resolution); applied when the game starts.
+- ⚠️ Beta: some 3D HUD markers (objectives) can look slightly shifted, and the sides may show the last
+  frame during videos.
 
 ### 🧩 Shader cache and precompiling
 
@@ -203,13 +238,53 @@ device used** (default), **keyboard and mouse**, or **PS4**. Set it in the launc
 *Insert → Controls → Button prompts*. 🔄 **The game uses the option it was opened with: restart to
 change it.** Sticks and the touchpad keep their PS4 icons.
 
+### 🎮 Cheats, debug and free camera
+
+*Launcher → **Cheats** · in game: **Insert → Cheats** (applied at once)*
+
+| Cheat | What it does |
+|---|---|
+| 🛡️ **God mode** | You take no damage |
+| 🔫 **Infinite ammo** | Reserve ammo and grenades are never used up |
+| ♻️ **No reload** | The magazine never empties |
+| 🏃 **Unlimited sprint** | Stamina refills while you sprint |
+| 🦉 **Continuous Tactical Echo** | The OWL scan keeps pulsing (use it once after each load) |
+| 🔓 **Unlock all chapters** *(debug)* | Every chapter in Chapter Select; **your saved progress doesn't change** |
+
+Cheats only affect the player. **Unlock all chapters** uses the debug settings the developers left in
+the game.
+
+**🎥 Free camera**
+
+| | Keyboard and mouse | Controller |
+|---|---|---|
+| On / off · back to the player | **F9** · **F10** | *Insert → Cheats → Free camera* |
+| Move · down / up | **W A S D** · **Q / E** | Left stick · L1 / R1 |
+| Look | **Mouse** or **arrow keys** | Right stick |
+| Faster / slower | **Shift / Ctrl** | R2 / L2 |
+
+The player stands still while the camera flies. 📸 Great for screenshots (**F12**).
+
 ### 🧰 Launcher
 
-English and Spanish · dump check · automatic updates · display mode, window size, resolution,
-upscaler and its **quality mode**, frame generation, frame rate limit (30, 60, experimental 144 /
-240 / unlimited), VSync, anisotropic filtering, texture sharpness, FSR 1, **screen effects**,
-**shader precompile**, **button icons** · keyboard, mouse and controller mapping · FOV · quick links
-to saves, screenshots and logs · **Ports Discord** button.
+**New in 0.5.0:** a launcher redesigned from scratch, with **every option clearer**.
+
+| | |
+|---|---|
+| 🧭 **Side menu** | **Home · Graphics · Controls** (Keyboard and mouse / Controller) **· Cheats · Advanced** |
+| 🗂️ **Cards by topic** | Display, Upscaling (method, FSR 4, quality, frame generation), Image quality, Effects… each option explained |
+| 🎨 **Two themes** | **Vektan** (cyan) or **Helghast** (orange) |
+| ❤️ **Support** | **PayPal** and **Ports Discord** buttons at the top |
+
+Everything as before: English and Spanish · dump check · automatic updates · display mode, window
+size, resolution, **ultrawide**, upscaler (**FSR 4** download included) and its **quality mode**,
+frame generation, frame rate limit (30, 60, experimental 144 / 240 / unlimited), VSync, anisotropic
+filtering, texture sharpness, FSR 1, screen effects, shader precompile, button icons, **cheats** ·
+keyboard, mouse and controller mapping · FOV · quick links to saves, screenshots and logs.
+
+> 🛟 **If the new launcher doesn't open or looks wrong,** open **`Classic launcher.bat`** (next to
+> `Killzone Shadow Fall.exe`): the previous launcher, same options, saves and settings. The new one
+> needs Microsoft Edge WebView2 (included in Windows 10/11); without it the classic one opens by itself.
 
 ## 🗂️ Game versions
 
@@ -240,18 +315,23 @@ Reports (distro or Steam Deck, Proton version, GPU) are welcome on Discord or in
   [Direct mouse aim](#-direct-mouse-aim-11).
 - **First play:** some effects can show up a few frames late while their shader compiles; see
   [Shader cache](#-shader-cache-and-precompiling).
+- **FSR 4:** a 3-4 second freeze the first time you enter a level or reload a checkpoint (it
+  prepares its AI model), and a short pause when you change the quality mode live with it.
+- **Ultrawide (beta):** some 3D HUD markers can look slightly shifted; video sides may show the last frame.
 - **Above 60 FPS (experimental):** turn VSync off on a 60 Hz monitor.
 - The shader cache can take several GB ("Clear cache" in the launcher).
 - Multiplayer: offline only (Botzone).
 
 ## 🗺️ Roadmap
 
+**✅ Done in 0.5.0:** ✨ FSR 4 · 🎚️ upscaler quality in game · 🖥️ ultrawide 21:9 / 32:9 · 🎮 cheats,
+all chapters and free camera · 🧰 new launcher.
+
 **🔜 Coming next**
-- 🖥️ **Ultrawide (21:9)** support: wider view (Hor+) with the HUD kept in place.
-- ✨ **FSR 4** upscaling.
-- 🎮 **Cheats**: debug menu and patches (e.g. unlocking every chapter).
-- 🧰 A **new, improved and more intuitive launcher**: it already has many options, and the new one
-  will present them far more clearly.
+- 🎮 **Xbox button icons** in the game, like the keyboard ones (selectable in the launcher).
+- 🚀 **Performance** on CPU-limited PCs, if it's worth it.
+- 🐧 Check whether a **native Linux package** is viable.
+- 🐞 **Important issues**, above all the crashes on **Intel** graphics.
 
 **Later**
 - In-game menu in Spanish.
@@ -291,6 +371,9 @@ build the bridge first with Visual Studio 2022 and the [NVIDIA DLSS SDK](https:/
 Port nativo para Windows de **Killzone Shadow Fall** (PS4). El código del juego corre directamente
 en tu CPU; los gráficos se traducen a Vulkan en tiempo real. **Beta pública:** se puede jugar la
 campaña completa, y mejora con cada reporte.
+
+> 🆕 **0.5.0:** ✨ **FSR 4** · 🎚️ cambiá la **calidad del reescalador en el juego** · 🖥️ **ultrawide** 21:9 / 32:9 ·
+> 🎮 **trucos**, **todos los capítulos** y **cámara libre** · 🧰 **launcher nuevo**.
 
 > ⚠️ **No incluye archivos del juego.** Necesitás tu propia copia dumpeada del juego, **versión
 > 01.81**: **CUSA00190** (la probada) u otra región (ver [Versiones del juego](#️-versiones-del-juego)).
@@ -347,6 +430,7 @@ remapeables, zona muerta de sticks, vibración y volumen del altavoz del mando.
 | **Esc** · **Círculo / B** | Cierra el menú |
 | **L1 / R1** · **Q / E** | Cambia de pestaña en el menú |
 | **F12** | Captura de pantalla (`user\ps4\screenshots`) |
+| **F9** · **F10** | Cámara libre sí / no · volver al jugador ([Trucos](#-trucos-depuración-y-cámara-libre)) |
 | **Alt + F4** | Cierra el juego |
 
 ## ✨ Funciones
@@ -394,7 +478,8 @@ se aplica al instante**, sin cerrar el juego. Se guarda solo, y el launcher mues
 | | Íconos de botones: último dispositivo / teclado y mouse / PS4 | 🔄 Reinicio |
 | 🖼️ **Image** | Modo de pantalla (ventana / sin bordes / completa), VSync | ⚡ En vivo |
 | | Reescalado FSR 1, nitidez (RCAS) y su intensidad | ⚡ En vivo |
-| | Reescalador **FSR 3.1 / DLSS** *(si el juego arrancó con uno)* | ⚡ En vivo |
+| | Reescalador **FSR 3.1 / FSR 4 / DLSS** *(si el juego arrancó con uno)* | ⚡ En vivo |
+| | **Calidad del reescalado** (Calidad, Equilibrado, Rendimiento, Ultra rendimiento) | ⚡ En vivo · 🔄 reinicio desde / hacia Nativa |
 | | **Generación de frames** Apagada / FSR 3.1 / DLSS | ⚡ En vivo · 🔄 reinicio para encenderla desde apagada |
 | | Nitidez de texturas (LOD bias, de -2 a +2) | ⚡ En vivo |
 | | Filtrado anisotrópico | 🔄 Reinicio |
@@ -402,6 +487,7 @@ se aplica al instante**, sin cerrar el juego. Se guarda solo, y el launcher mues
 | 🚀 **Performance** | Límite de FPS, cuadros en cola, compilación de shaders en segundo plano | ⚡ En vivo |
 | | Opciones de lectura de GPU (las de rendimiento de la 0.2.5) | 🔄 Reinicio |
 | 📊 **Overlay** | FPS, frametime, reescalador, GPU, CPU, RAM, VRAM · tamaño, esquina, opacidad | ⚡ En vivo |
+| 🎮 **Cheats** | Modo dios, munición infinita, sin recarga, sprint ilimitado, eco táctico, todos los capítulos, cámara libre | ⚡ En vivo |
 
 - 🔄 **Aplicar y reiniciar:** las opciones de *reinicio* muestran un botón que cierra el juego, y el
   launcher lo vuelve a abrir solo con lo nuevo (se pierde lo no guardado desde el último punto de
@@ -421,13 +507,30 @@ se aplica al instante**, sin cerrar el juego. Se guarda solo, y el launcher mues
 
 ### 🖥️ Resolución, reescalado y generación de frames
 
-- **Más de 1080p con AMD FSR 3.1 o NVIDIA DLSS** (1440p, 1800p, 4K): el juego renderiza en 1080p y
-  el reescalador lo lleva a tu resolución; HUD, menús y videos se dibujan nítidos a tamaño completo.
+- **Más de 1080p con AMD FSR 3.1, AMD FSR 4 o NVIDIA DLSS** (1440p, 1800p, 4K): el juego renderiza en
+  1080p y el reescalador lo lleva a tu resolución; HUD, menús y videos se dibujan nítidos a tamaño completo.
 - **Nítido y estable:** jitter de subpíxel y los vectores de movimiento por píxel del propio juego,
   así el arma, los objetos que se mueven y la cámara se siguen bien.
 - **Generación de frames:** **AMD FSR 3.1** en cualquier GPU, **NVIDIA DLSS** en GeForce RTX 40/50
   (hasta 4x en RTX 50). Casi el doble de cuadros con HUD y textos nítidos.
 - El método clásico (parche de resolución del juego) sigue en *Avanzado*.
+
+### ✨ AMD FSR 4
+
+El reescalador con IA de AMD: **imagen más nítida y estable que FSR 3.1**, con un costo de GPU algo mayor.
+
+1. Launcher → **Gráficos → Escalado → Método** → **AMD FSR 4 (mejor calidad)**.
+2. En la fila **Archivos de FSR 4** apretá **Descargar** (una sola vez, unos 30 MB, ~1 minuto) hasta que diga **Instalados**.
+3. Dale a **JUGAR**. En el juego, **Insert → Image → Upscaler** cambia entre FSR 3.1 / FSR 4 / DLSS.
+
+| | |
+|---|---|
+| 🎮 **Placas** | Vulkan 1.3 con enteros de 8 bits: **GeForce RTX 20 o más nuevas, Radeon RX 6000 / 7000 / 9000, Intel Arc** |
+| 🔁 **Respaldo** | Sin los archivos o en otra placa, el juego usa **FSR 3.1** |
+| 📦 **Archivos** | De [FireBurn/Q2RTX](https://github.com/FireBurn/Q2RTX), compilados del código FidelityFX de AMD (MIT). El zip ya trae nuestras pasadas optimizadas |
+
+> ⏳ Al **entrar a una partida** o **recargar un punto de control**, FSR 4 puede **congelar el juego 3-4
+> segundos la primera vez** mientras prepara su modelo de IA. No es un crash: esperá y sigue.
 
 ### 🎚️ Calidades de reescalado
 
@@ -448,9 +551,21 @@ completo.**
 | El límite es tu **placa de video**: GPU modesta, o 1440p / 1800p / 4K con la GPU cerca del 100% | El límite es tu **procesador** (pocos FPS con la GPU por debajo del 100%): menos píxeles no ayudan a la CPU |
 | Querés más FPS y aceptás una imagen algo más suave | Tu GPU ya sostiene los FPS que querés: **Nativa** es la que mejor se ve |
 
-Necesita **FSR 3.1 o DLSS** como método de resolución (*Avanzado → Método de resolución*) o la
-generación de frames activada, y se lee al iniciar el juego. **Insert → Image** muestra los tamaños
-en uso (*"WxH scene, WxH output"*).
+Necesita **FSR 3.1, FSR 4 o DLSS** como método (*Gráficos → Escalado*) o la generación de frames activada.
+🎚️ **Cambiala dentro del juego** en **Insert → Image → Upscaling quality**: entre los modos reducidos se
+aplica ⚡ **en vivo**; desde o hacia **Nativa** usá **Apply and restart**. El menú muestra los tamaños en
+uso (*"WxH scene, WxH output"*).
+
+### 🖥️ Ultrawide 21:9 y 32:9 (beta)
+
+*Launcher → Gráficos → Pantalla → **Ultrawide (beta)***: **2560 × 1080**, **3440 × 1440**, **3840 × 1600**
+(21:9) y **5120 × 1440** (32:9).
+
+- 🔭 **Hor+:** la imagen llena la pantalla y **se ve más a los costados**, sin estirar nada.
+- 🎯 **El HUD, los menús y los videos** quedan en el centro en 16:9.
+- ⚙️ Usa FSR / DLSS (reemplaza la resolución de render); se aplica al iniciar el juego.
+- ⚠️ Beta: algunos marcadores 3D del HUD (objetivos) pueden verse un poco corridos, y durante los videos
+  los costados pueden mostrar el último cuadro.
 
 ### 🧩 Caché de shaders y precompilado
 
@@ -482,13 +597,54 @@ PS4: **último dispositivo usado** (por defecto), **teclado y mouse**, o **PS4**
 launcher (*Controles*) o en *Insert → Controls → Button prompts*. 🔄 **El juego usa la opción con la
 que lo abriste: reiniciá para cambiarla.** Los sticks y el touchpad conservan el ícono de PS4.
 
+### 🎮 Trucos, depuración y cámara libre
+
+*Launcher → **Trucos** · en el juego: **Insert → Cheats** (se aplican al instante)*
+
+| Truco | Qué hace |
+|---|---|
+| 🛡️ **Modo dios** | No recibís daño |
+| 🔫 **Munición infinita** | La munición de reserva y las granadas no se gastan |
+| ♻️ **Sin recarga** | El cargador nunca se vacía |
+| 🏃 **Sprint ilimitado** | La resistencia se recarga mientras corrés |
+| 🦉 **Eco táctico continuo** | El escaneo del OWL sigue activo (usalo una vez después de cada carga) |
+| 🔓 **Desbloquear todos los capítulos** *(depuración)* | Todos en Selección de capítulo; **tu progreso guardado no cambia** |
+
+Los trucos solo afectan al jugador. **Desbloquear todos los capítulos** usa los ajustes de depuración
+que los desarrolladores dejaron en el juego.
+
+**🎥 Cámara libre**
+
+| | Teclado y mouse | Mando |
+|---|---|---|
+| Activar / desactivar · volver al jugador | **F9** · **F10** | *Insert → Cheats → Free camera* |
+| Moverse · bajar / subir | **W A S D** · **Q / E** | Stick izquierdo · L1 / R1 |
+| Mirar | **Mouse** o **flechas** | Stick derecho |
+| Más rápido / más lento | **Shift / Ctrl** | R2 / L2 |
+
+El jugador se queda quieto mientras la cámara vuela. 📸 Ideal para capturas (**F12**).
+
 ### 🧰 Launcher
 
-Inglés y español · verificación del dump · actualizaciones automáticas · modo de pantalla, tamaño
-de ventana, resolución, reescalador y su **modo de calidad**, generación de frames, límite de FPS
-(30, 60, experimentales 144 / 240 / sin límite), VSync, filtrado anisotrópico, nitidez de texturas,
-FSR 1, **efectos de pantalla**, **precompilado de shaders**, **íconos de botones** · controles de
-teclado, mouse y mando · FOV · accesos a partidas, capturas y logs · botón **Ports Discord**.
+**Nuevo en 0.5.0:** un launcher rediseñado desde cero, con **todas las opciones más claras**.
+
+| | |
+|---|---|
+| 🧭 **Menú lateral** | **Inicio · Gráficos · Controles** (Teclado y mouse / Mando) **· Trucos · Avanzado** |
+| 🗂️ **Tarjetas por tema** | Pantalla, Escalado (método, FSR 4, calidad, generación de frames), Calidad de imagen, Efectos… cada opción explicada |
+| 🎨 **Dos temas** | **Vektan** (cian) o **Helghast** (naranja) |
+| ❤️ **Apoyo** | Botones de **PayPal** y **Ports Discord** arriba |
+
+Todo lo de antes: inglés y español · verificación del dump · actualizaciones automáticas · modo de
+pantalla, tamaño de ventana, resolución, **ultrawide**, reescalador (con descarga de **FSR 4**) y su
+**modo de calidad**, generación de frames, límite de FPS (30, 60, experimentales 144 / 240 / sin
+límite), VSync, filtrado anisotrópico, nitidez de texturas, FSR 1, efectos de pantalla, precompilado
+de shaders, íconos de botones, **trucos** · controles de teclado, mouse y mando · FOV · accesos a
+partidas, capturas y logs.
+
+> 🛟 **Si el launcher nuevo no abre o se ve mal,** abrí **`Classic launcher.bat`** (al lado de
+> `Killzone Shadow Fall.exe`): el launcher anterior, con las mismas opciones, partidas y ajustes. El
+> nuevo necesita Microsoft Edge WebView2 (viene con Windows 10/11); si no está, se abre el clásico solo.
 
 ## 🗂️ Versiones del juego
 
@@ -520,18 +676,24 @@ Linux (AppImage).
   [Mouse directo](#-mouse-directo-11).
 - **Primera partida:** algunos efectos pueden aparecer unos cuadros tarde mientras se compila su
   shader; ver [Caché de shaders](#-caché-de-shaders-y-precompilado).
+- **FSR 4:** se congela 3-4 segundos la primera vez que entrás a una partida o recargás un punto de
+  control (prepara su modelo de IA), y hace una pausa corta al cambiar el modo de calidad en vivo.
+- **Ultrawide (beta):** algunos marcadores 3D del HUD pueden verse corridos; en los videos los costados
+  pueden mostrar el último cuadro.
 - **Más de 60 FPS (experimental):** con un monitor de 60 Hz desactivá VSync.
 - La caché de shaders puede ocupar varios GB ("Borrar caché" en el launcher).
 - Multijugador: solo sin conexión (Botzone).
 
 ## 🗺️ Próximamente
 
+**✅ Hecho en 0.5.0:** ✨ FSR 4 · 🎚️ calidad del reescalador en el juego · 🖥️ ultrawide 21:9 / 32:9 ·
+🎮 trucos, todos los capítulos y cámara libre · 🧰 launcher nuevo.
+
 **🔜 Lo que viene**
-- 🖥️ **Soporte ultrawide (21:9):** vista más ancha (Hor+) con el HUD en su lugar.
-- ✨ **FSR 4**.
-- 🎮 **Cheats**: menú debug y parches (por ejemplo desbloquear todos los capítulos).
-- 🧰 Un **launcher nuevo, mejorado e intuitivo**: ya tiene muchas opciones, y el nuevo las va a
-  presentar mucho más claras.
+- 🎮 **Íconos de botones de Xbox** en el juego, como los de teclado (elegibles en el launcher).
+- 🚀 **Rendimiento** en PCs limitadas por la CPU, si vale la pena.
+- 🐧 Ver si es viable un **paquete nativo para Linux**.
+- 🐞 **Issues importantes**, sobre todo los crashes en gráficas **Intel**.
 
 **Más adelante**
 - Menú dentro del juego en español.
@@ -559,7 +721,7 @@ compilá antes el puente con Visual Studio 2022 y el [SDK de NVIDIA DLSS](https:
 - **Lesca**: Killzone Shadow Fall port (dynamic module loader, PS4 clock fix, tessellation and
   texture fixes, fonts, resolution patches, VRAM reduction, shader stutter fix, FSR/DLSS
   calibration, jitter and motion vectors, frame generation, direct mouse aim, live FOV, in-game
-  menu and quick menu, launcher).
+  menu and quick menu, FSR 4, upscaler quality modes, ultrawide, cheats and free camera, launcher).
 - **Felipe Prado**: [gow3_pc / SpartanPort](https://github.com/FelipePrado0/SpartanPort), the base
   of this port (its README is in [docs/gow3_pc](docs/gow3_pc/README.md)).
 - **Supermedo** and **deadinside28**: [bloodborne_pc](https://github.com/deadinside28/bloodborne_pc),
@@ -571,7 +733,10 @@ compilá antes el puente con Visual Studio 2022 y el [SDK de NVIDIA DLSS](https:
   shader translation to Vulkan).
 - **clearfeather**: startup crash fix for base 01.00 + update installs (file symlink stat, PR #31),
   controller/audio suggestions and the controller quick menu idea (#49).
-- **AMD FidelityFX FSR 3.1** ([FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan)) and **NVIDIA
+- **pearlxcore**: [KillzoneShadowFall-PC](https://github.com/pearlxcore/KillzoneShadowFall-PC), whose
+  free camera math, Tactical Echo patch and effect toggles were adapted here.
+- **AMD FidelityFX FSR 3.1** ([FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan)), **AMD FSR 4**
+  (v07 INT8 shaders from [FireBurn/Q2RTX](https://github.com/FireBurn/Q2RTX), MIT) and **NVIDIA
   DLSS** ([DLSS SDK](https://github.com/NVIDIA/DLSS); NVIDIA's license is in `licenses\`).
 
 ## 📄 License
