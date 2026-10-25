@@ -17,8 +17,8 @@ Native Windows port of **Killzone Shadow Fall** (PS4). The game's code runs dire
 graphics are translated to Vulkan in real time. **Public beta:** the whole campaign is playable,
 and it keeps improving with every report.
 
-> 🆕 **0.5.0:** ✨ **FSR 4** · 🎚️ change the **upscaler quality in game** · 🖥️ **ultrawide** 21:9 / 32:9 ·
-> 🎮 **cheats**, **all chapters** and **free camera** · 🧰 **new launcher**.
+> 🆕 **0.6.0:** 🎮 **Xbox button icons** · 🏔️ **detail distance (LOD)** · 🔭 **FOV up to 200%** ·
+> 🚀 faster shaders · 🛠️ **12 issues fixed or improved** (crashes, AMD, 4 GB cards, launcher).
 
 > ⚠️ **No game files are included.** You need your own dumped copy of the game, **version 01.81**:
 > **CUSA00190** (the tested one) or another region (see [Game versions](#-game-versions)). This
@@ -95,7 +95,7 @@ speed cap. In practice it plays almost exactly like a PC shooter.
 
 ### 🔭 Field of view (FOV)
 
-A **FOV slider from 80% to 150%** of the original (100% = as on PS4). Set it in the launcher
+A **FOV slider from 80% to 200%** of the original (100% = as on PS4). Set it in the launcher
 (*Game* tab) or change it **live while playing** in the in-game menu (*Controls* tab): the view
 widens at once. Aiming zoom scales in the same proportion.
 
@@ -118,7 +118,7 @@ the same values.
 | | Vibration, stick dead zone, controller speaker | ⚡ Live |
 | | Hold Share for the quick menu, tips at startup | ⚡ Live |
 | | Camera shake (explosions, hits) | ⚡ Live |
-| | Button prompts: last device used / keyboard and mouse / PS4 | 🔄 Restart |
+| | Button prompts: automatic / keyboard and mouse / PS4 / Xbox | 🔄 Restart |
 | 🖼️ **Image** | Display mode (window / borderless / fullscreen), VSync | ⚡ Live |
 | | FSR 1 upscaling, sharpening (RCAS) and its strength | ⚡ Live |
 | | Upscaler **FSR 3.1 / FSR 4 / DLSS** *(when the game started with one)* | ⚡ Live |
@@ -231,12 +231,19 @@ Turn off **motion blur, depth of field, bloom and film grain** (*Launcher → Gr
 *Insert → Image*): they apply **when the game starts** (use **Apply and restart** in the menu).
 **Camera shake** (explosions, hits) switches **live** in *Insert → Controls*. Weapon recoil stays.
 
-### ⌨️ Keyboard and mouse button icons
+### ⌨️ Keyboard, mouse and Xbox button icons
 
-The game's prompts can show **your keys** (or the mouse button) instead of PS4 buttons: **last
-device used** (default), **keyboard and mouse**, or **PS4**. Set it in the launcher (*Controls*) or
+The game's prompts can show **your keys** (or the mouse button) or **Xbox buttons** instead of PS4
+buttons: **automatic** (default: the last device used, and Xbox icons for any controller that isn't
+a PlayStation one), **keyboard and mouse**, **PS4** or **Xbox**. Set it in the launcher (*Controls*) or
 *Insert → Controls → Button prompts*. 🔄 **The game uses the option it was opened with: restart to
 change it.** Sticks and the touchpad keep their PS4 icons.
+
+### 🏔️ Detail distance (LOD)
+
+How far characters and objects keep their **detailed models**, from **50% to 300%** (100% = as on
+PS4). Higher: **less pop-in** in the distance, more GPU and CPU work. Lower: **more FPS**. Set it in
+the launcher (*Graphics → Image*) or change it **live** in *Insert → Image → Level of detail*.
 
 ### 🎮 Cheats, debug and free camera
 
@@ -324,14 +331,14 @@ Reports (distro or Steam Deck, Proton version, GPU) are welcome on Discord or in
 
 ## 🗺️ Roadmap
 
-**✅ Done in 0.5.0:** ✨ FSR 4 · 🎚️ upscaler quality in game · 🖥️ ultrawide 21:9 / 32:9 · 🎮 cheats,
-all chapters and free camera · 🧰 new launcher.
+**✅ Done in 0.6.0:** 🎮 Xbox button icons · 🏔️ detail distance (LOD) · 🔭 FOV up to 200% ·
+🚀 faster and more correct shaders · 🛠️ crash fixes and launcher fixes.
 
-**🔜 Coming next**
-- 🎮 **Xbox button icons** in the game, like the keyboard ones (selectable in the launcher).
-- 🚀 **Performance** on CPU-limited PCs, if it's worth it.
-- 🐧 Check whether a **native Linux package** is viable.
-- 🐞 **Important issues**, above all the crashes on **Intel** graphics.
+**🔜 Coming next:** the port is nearly complete in features, so the focus now is
+- 🐞 **Stability and crashes**, above all on **Intel Arc** and **AMD** graphics.
+- 🧩 **Compatibility** with other regions and dumps, and the remaining issues.
+- 🌍 **More languages in the launcher.**
+- Something new only if it's important (tell us on Discord).
 
 **Later**
 - In-game menu in Spanish.
@@ -372,8 +379,8 @@ Port nativo para Windows de **Killzone Shadow Fall** (PS4). El código del juego
 en tu CPU; los gráficos se traducen a Vulkan en tiempo real. **Beta pública:** se puede jugar la
 campaña completa, y mejora con cada reporte.
 
-> 🆕 **0.5.0:** ✨ **FSR 4** · 🎚️ cambiá la **calidad del reescalador en el juego** · 🖥️ **ultrawide** 21:9 / 32:9 ·
-> 🎮 **trucos**, **todos los capítulos** y **cámara libre** · 🧰 **launcher nuevo**.
+> 🆕 **0.6.0:** 🎮 **íconos de botones de Xbox** · 🏔️ **distancia de detalle (LOD)** · 🔭 **FOV hasta 200%** ·
+> 🚀 shaders más rápidos · 🛠️ **12 issues corregidos o mejorados** (crashes, AMD, placas de 4 GB, launcher).
 
 > ⚠️ **No incluye archivos del juego.** Necesitás tu propia copia dumpeada del juego, **versión
 > 01.81**: **CUSA00190** (la probada) u otra región (ver [Versiones del juego](#️-versiones-del-juego)).
@@ -453,7 +460,7 @@ respuesta y sin tope de velocidad. En la práctica se juega casi igual que un sh
 
 ### 🔭 Campo de visión (FOV)
 
-Un **slider de FOV de 80% a 150%** del original (100% = como en PS4). Se ajusta en el launcher
+Un **slider de FOV de 80% a 200%** del original (100% = como en PS4). Se ajusta en el launcher
 (pestaña *Juego*) o **en vivo mientras jugás** en el menú dentro del juego (pestaña *Controls*): la
 vista se abre al instante. El zoom al apuntar se escala en la misma proporción.
 
@@ -475,7 +482,7 @@ se aplica al instante**, sin cerrar el juego. Se guarda solo, y el launcher mues
 | | Vibración, zona muerta de sticks, altavoz del mando | ⚡ En vivo |
 | | Mantener Share para el menú rápido, consejos al iniciar | ⚡ En vivo |
 | | Temblor de cámara (explosiones, impactos) | ⚡ En vivo |
-| | Íconos de botones: último dispositivo / teclado y mouse / PS4 | 🔄 Reinicio |
+| | Íconos de botones: automático / teclado y mouse / PS4 / Xbox | 🔄 Reinicio |
 | 🖼️ **Image** | Modo de pantalla (ventana / sin bordes / completa), VSync | ⚡ En vivo |
 | | Reescalado FSR 1, nitidez (RCAS) y su intensidad | ⚡ En vivo |
 | | Reescalador **FSR 3.1 / FSR 4 / DLSS** *(si el juego arrancó con uno)* | ⚡ En vivo |
@@ -590,12 +597,20 @@ Efectos*, o *Insert → Image*): se aplican **al iniciar el juego** (usá **Appl
 menú). El **temblor de cámara** (explosiones, impactos) cambia **en vivo** en *Insert → Controls*. El
 retroceso del arma se mantiene.
 
-### ⌨️ Íconos de teclado y mouse
+### ⌨️ Íconos de teclado, mouse y Xbox
 
-Los avisos del juego pueden mostrar **tus teclas** (o el botón del mouse) en vez de los botones de
-PS4: **último dispositivo usado** (por defecto), **teclado y mouse**, o **PS4**. Se elige en el
+Los avisos del juego pueden mostrar **tus teclas** (o el botón del mouse) o **botones de Xbox** en
+vez de los botones de PS4: **automático** (por defecto: el último dispositivo usado, e íconos de Xbox
+con cualquier mando que no sea de PlayStation), **teclado y mouse**, **PS4** o **Xbox**. Se elige en el
 launcher (*Controles*) o en *Insert → Controls → Button prompts*. 🔄 **El juego usa la opción con la
 que lo abriste: reiniciá para cambiarla.** Los sticks y el touchpad conservan el ícono de PS4.
+
+### 🏔️ Distancia de detalle (LOD)
+
+Hasta qué distancia personajes y objetos mantienen sus **modelos detallados**, de **50% a 300%**
+(100% = como en PS4). Más alto: **menos aparición repentina de detalle** a lo lejos, más carga de GPU
+y CPU. Más bajo: **más FPS**. Se ajusta en el launcher (*Gráficos → Imagen*) o **en vivo** en
+*Insert → Image → Level of detail*.
 
 ### 🎮 Trucos, depuración y cámara libre
 
@@ -686,14 +701,14 @@ Linux (AppImage).
 
 ## 🗺️ Próximamente
 
-**✅ Hecho en 0.5.0:** ✨ FSR 4 · 🎚️ calidad del reescalador en el juego · 🖥️ ultrawide 21:9 / 32:9 ·
-🎮 trucos, todos los capítulos y cámara libre · 🧰 launcher nuevo.
+**✅ Hecho en 0.6.0:** 🎮 íconos de botones de Xbox · 🏔️ distancia de detalle (LOD) · 🔭 FOV hasta
+200% · 🚀 shaders más rápidos y correctos · 🛠️ correcciones de crashes y del launcher.
 
-**🔜 Lo que viene**
-- 🎮 **Íconos de botones de Xbox** en el juego, como los de teclado (elegibles en el launcher).
-- 🚀 **Rendimiento** en PCs limitadas por la CPU, si vale la pena.
-- 🐧 Ver si es viable un **paquete nativo para Linux**.
-- 🐞 **Issues importantes**, sobre todo los crashes en gráficas **Intel**.
+**🔜 Lo que viene:** el port ya está casi completo en funciones, así que ahora el foco es
+- 🐞 **Estabilidad y crashes**, sobre todo en gráficas **Intel Arc** y **AMD**.
+- 🧩 **Compatibilidad** con otras regiones y dumps, y los issues que quedan.
+- 🌍 **Más idiomas en el launcher.**
+- Algo nuevo solo si es importante (contanos en Discord).
 
 **Más adelante**
 - Menú dentro del juego en español.

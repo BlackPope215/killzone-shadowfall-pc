@@ -423,3 +423,89 @@ PENDIENTE (orden del usuario, 2026-10-23): commit de todo lo posterior a v0.4.0 
 teclado, elegible en el launcher; textura nueva); (3) Linux: ver si es viable empaquetar; (4) issues importantes
 (sobre todo crashes Intel). Última prioridad: cursor de mouse en los menús del juego (ver si es posible).
 RESUME POINT "NEXUS COMMIT" (2026-10-23): primero commitear todo (sin commit desde v0.4.0), después seguir la lista.
+
+## 2026-10-25 Íconos de Xbox (sin commit, dist refrescado, SIN PROBAR)
+- prompt_style 3 = Xbox (gow3.ini clamp 0..3, menú "Button prompts" 4 opciones, launcher Tk/web [0,1,2,3]). Auto (0): último dispositivo; si es mando, SDL_GetGamepadType PS3/4/5 -> PS4, cualquier otro -> Xbox (runtime_pad.c prompt_pad_playstation). runtime_pad_prompts_pc() reemplazada por runtime_pad_prompt_set(): -1 PS4, 0 teclado, 1 Xbox.
+- Arte: prompt_art.h kind 4 = gow3_prompt_pad_art (por código, monocromo como el HUD, antialias por distancias): A/B/X/Y círculo, LB/RB bumper, LT/RT gatillo, LS/RS, MENU (≡), VIEW (dos cuadros), cruceta con brazo iluminado. Etiqueta sale de runtime_pad_prompt_xbox_binding (pad_map, respeta GOW3_PAD_MAP; L2/R2 siempre LT/RT; touchpad = View).
+- probe.c: todas las copias duplicadas por set ([GOW3_PROMPT_SETS][...]), ambas preparadas al descubrir atlas/ImageMap; prompt_draw primero devuelve al holder original los comandos que quedaron en el holder de otro set (gow3_prompt_release). Logs: "atlas N Xbox copy ready", "first Xbox icon drawn", "first Xbox icon in rich text (menus)".
+- Prueba: kz_work\bats\Prueba iconos Xbox.bat (GOW3_PROMPT_STYLE=3).
+
+## 2026-10-25 Análisis: cursor en menús, Linux, ps4_core, opciones gráficas (sin código)
+- ps4_core (ref_ports/ps4_core, sync 21/10): nos faltan COMPUTE_ASYNC_BUILD, GFX_DEFERRED_BIND, SUBMIT_DRAWS (~1024 draws), pase "frame time" 17/10 (IsRegionGpuModified early-out, FillBacking memset, SamplerSetMemo, SET_WRITE_POOL, PRESENT_SKIP_CLEAR, SPIR-V cache en todos los caminos), BARRIER_MERGE, PHYS_CORES, LOOP_LIMIT, red zone Windows (G3RZONE1, isa_rewrite --red-zone), E/S de archivos Windows (bounce buffer + reintentos), VRAM paginable/residencia 16 MB/alocar sobre presupuesto, freeze report + WAIT_STATS. NO aplica a KZ: cola compute async (KZ no importa MapComputeQueue; solo SubmitAndFlip), eager readback/write merge (inFAMOUS), NGS2 (KZ no lo importa), SSE4A (eboot sin EXTRQ/INSERTQ; sí BEXTR 1787, ANDN 316, LZCNT 147, MOVBE 4), BC 1D (0 avisos en log KZ).
+- Opciones gráficas (RTTI): 0x17c4b10 recurso de vista: +0x44 LODFadingEnabled, +0x48 LODDistanceMultiplier, +0x4c LowLODDistanceMultiplier, +0x50 TextureMipMapBias, +0x08 FOVMultiplier. 0x16198c0 +0x28 LodDistanceScale/+0x2c Bias. Sombras sol 0x1618ed0: +0xc8 CascadeCount, CascadeSettings0-4, LongDistanceShadowSettings; luces 0x15f18f0/0x16186a0 ShadowMapSize, StopShadowCastingDistanceRange. Partículas 0x15e36f0: +0xf28 LightSamplingResolution (1x1..8x8), +0xf14/+0xf18 LOD distances; ParticleRate en 0x15e15f0. SSAOSettings/BloomSettings en 0x161e6f0. Volumétrica: VolumeLightSampleCountForCascade (0x161fc30). Máscara post-FX 0x161d504: además de 1/2/4/8, bits 0x10 (viñeta, no segura), 0x80 (0x57a997), 0x800 (0x578151); grupos 0x9ff/0x81c/0x14/0x3.
+- Cursor: GUI Decima tiene CursorWidget/CursorWidgetResource, "no_cursor_support", SetFocus/GetFocusedIndex/focus-firstchild; UseMouse es de una cámara (0x163a6f0), no del GUI. Hover->SetFocus requiere RE del árbol de widgets.
+- Linux: packaging/linux + appimage.sh heredados de gow3_pc; código con #ifdef _WIN32; compilar en WSL1 posible, probar no.
+
+## 2026-10-25 ps4_core tanda 1 (sin commit, dist refrescado, SIN PROBAR)
+- region_manager.h: cpu_any/gpu_any atómicos (IsRegionModified sin escanear bitmap) = copia normalizada del núcleo.
+- SetWritePool (GOW3_SET_WRITE_POOL=0 off): set_writes no se limpia por draw, EnsureSetWrites, Pipeline::BindResources(set_writes, count, push); cada set_write anula los punteros de otro tipo.
+- SamplerSetMemo (toggle 1<<31): TextureSet guarda samplers + lru ids; TextureCache::TouchSamplers/SamplerGeneration (sube al borrar sampler). Se mantiene nuestra condición de bias (mip_filter != None && MaxLod > 0).
+- PRESENT_SKIP_CLEAR (=0 off): sin clear del swapchain si el blit lo cubre; nearest si 1:1.
+- SUBMIT_DRAWS (default 1024, 0 off): Scheduler::CountWork/WorkSinceSubmit, Rasterizer::SubmitIfWorkPiledUp antes de cada draw que abre render pass. Log "GPU: submit every N recorded draws".
+- Owner hook (núcleo): Scheduler::SetOwnerHook/CheckOwner en CommandBuffer/Record/ReserveRecordData/EndRendering/KickRecording; Rasterizer::SchedulerOwnerHook drena el draw pipe si el hilo A usa el scheduler con paquetes en vuelo; log "gow3: scheduler used ... from 0x..." una vez por sitio. Probable causa real del endRendering sin rendering abierto (cinemática cap. 2).
+- vk_scheduler.h ahora incluye vk_draw_pipe.h (trae windows.h: macro near -> lambda renombrada en vk_camera_motion.cpp).
+- No portado aún: COMPUTE_ASYNC_BUILD, GFX_DEFERRED_BIND, BARRIER_MERGE (opt-in en núcleo), PHYS_CORES, red zone, E/S Windows, VRAM paginable, LOOP_LIMIT, freeze report. Upstream gow3_pc (spartanport, PR #959) 4b843a7: prioridades de hilos para CPUs de 4 hilos.
+- Prueba A/B: kz_work\bats\'Prueba ps4_core 1 - mejoras activadas.bat' vs '2 - sin mejoras (comparar).bat' (toggle file bit 31 + envs =0).
+
+## 2026-10-25 Resultado tanda 1 + upstream spartanport + issues (análisis)
+- A/B usuario (mismo recorrido; logs 16-54-18 con / 17-01-44 sin): por carga 1400-2000 draws 47.4 vs 51.4 FPS, 2000-2500 40.6 vs 43.3, 2500-2900 36.9 vs 37.0, 2900-3400 33.7 vs 33.8. Stage B ocupado 48% vs 62%, stage A esperó 16.8% vs 23.7% (el CPU del draw pipe SÍ bajó). SUBMIT_DRAWS hizo ~9200 envíos extra (cada Flush sincroniza el grabador) -> pierde en escenas livianas. Ahora GOW3_SUBMIT_DRAWS default 0 (opt-in). Resto queda.
+- Upstream gow3_pc = SpartanPort (origin/main 84f2d39, 451 commits desde 015ffd8). Genéricos útiles: d6d1aea swapchain al perder foco en fullscreen (vk_swapchain/presenter/window), ad2784f DirectSound si falla WASAPI (runtime_audio.c), b6b35ac exit 21 + mensaje de archivo de paginación al fallar memoria guest, 368d899 guard shader vacío, b776be7 caché de shaders/readback (grande). 4b843a7 prioridades: ya portado (sin bajar WorkerThread; KZ: JobSched_000..004 prio 699, sin evidencia de spinlock).
+- Issues abiertos (API GitHub, 25/10): code 23 = "GPU library assertion failed": #35 vk_platform.h:56 Check (Vulkan result != success, RTX 3050 4 GB -> probable OOM), #52/#62 vk_runtime.cpp:464/477 CopyImageWithBuffer ASSERT (layers distintos o mips!=1; al salir de cinemática / continuar campaña), #56 vk_scheduler.cpp:568 SubmitExecution (submit falla: device lost?), #68 RX 6600 crash con FG 3.1 / FSR en AMD. code 3 = 0xc000001d (UD2 del juego): 0x3278a0 (#27, 3 usuarios CUSA00190) y 0x61b534 (#47/#53 CUSA00002 EU: RTTIBin con prefijo 02 00 f0 57). Otros: #43 4 GB VRAM, #51/#69 AMD líneas violetas, #1/#24 Intel Arc negro, #64 fuego/sombras parpadean, #66 frame pacing, #61 más LOD, #7 CPUs sin MOVBE etc. Logs en scratchpad issue_logs (temporal).
+- ps4_core relevante a issues: swapchain waitIdle/rebuild toman el lock de la cola (carrera con submits -> device lost), VRAM paginable/sobre presupuesto (#43), LOOP_LIMIT.
+
+## 2026-10-25 Tanda 2 estabilidad (sin commit, build en out/kzsf-stage; dist se copia con el bat, SIN PROBAR)
+- Evaluación tanda 1: SUBMIT_DRAWS ELIMINADO del código (peor en escenas livianas). Se quedan: pool de descriptores, memo de samplers, early-out de regiones, present sin clear, owner hook (0 disparos en la prueba; red de seguridad).
+- Swapchain (ps4_core): Scheduler::LockQueue(); Create/~Swapchain/SetHDR/UpdateVsync toman el lock de la cola para waitIdle/destroy; Recreate fuera del lock del present (2 sitios); acquire fence (GOW3_PRESENT_ACQUIRE_FENCE, default on): el hilo de swap espera la imagen antes del submit. Nuestro image_count +2 con frame gen conservado.
+- Alt-tab/minimizado (SpartanPort d6d1aea): WindowSDL::IsMinimized (eventos MINIMIZED/HIDDEN/OCCLUDED + flags), swapchain pospone creación si superficie 0x0/perdida (RecreateSurface), guards de índices, presenter no recrea minimizado.
+- Audio: fallback DirectSound si WASAPI no abre stream (SpartanPort ad2784f).
+- Memoria guest: exit(21) con mensaje de archivo de paginación (SpartanPort b6b35ac). Launcher: crash_hint(run_dir) lee errors.log -> pista (memoria / VRAM ErrorOutOfDeviceMemory / Device lost / GPU assert); game_ended_text en Tk y web. Probado contra logs de issues: #35 -> VRAM, #52/#56/#62 -> assert/device lost.
+- RetryPipelineCreation (ps4_core) en pipelines gráficos (CreateCachedGraphicsPipeline) y compute: hasta 5 intentos con espera ante Unknown/OutOfHost/OutOfDevice/InitFailed.
+- VK_EXT_pageable_device_local_memory + memory_priority (GOW3_PAGEABLE_MEMORY=0 off); log "GPU: pageable device memory on/off".
+- Guard shader vacío en TranslateProgram (SpartanPort 368d899).
+- NO hecho: LOOP_LIMIT (cambia SPIR-V -> invalida caché de todos; juntar con otro cambio de caché), compute async build / gfx deferred bind (pendiente tanda 3, tirones).
+- Ojo: heredoc bash + python con "\n" rompió literales C (vk_instance printf, runtime_audio) -> usar Write tool para scripts con \n.
+- Prueba: kz_work\bats\'Prueba ps4_core 3 - tanda 2 estabilidad.bat' (copia stage->dist, pide cerrar launcher).
+
+## 2026-10-25 Tanda 2 resultado + issues (sin commit, build en out/kzsf-stage)
+- Prueba tanda 2 (log 17-31-17): sin errores, cierre normal; pero escenas pesadas 33.3/31.2 vs 37.0/33.8 FPS. VRAM llegó a 6595 MiB (antes 6018) -> pageable en NVIDIA 8 GB dejaba pasar el presupuesto. Ahora pageable SOLO si heap device-local <= 6.5 GiB (GOW3_PAGEABLE_MEMORY=1/0 fuerza). Stage B volvió a ~60% -> la baja de la tanda 1 venía del SUBMIT_DRAWS; pool/memo quedan neutros.
+- #52/#62 (code 23 CopyImageWithBuffer, al saltar cinemática / continuar campaña): camino depth<->color por buffer SOLO sin VK_KHR_maintenance8 (RX 580, drivers viejos). Ahora copia todos los mips/capas comunes (regiones por mip, 128 MiB) en vez de ASSERT; log de aviso. Prueba en NVIDIA: GOW3_NO_MAINTENANCE8=1 (bat 'Prueba issues 1 - cinematica sin maintenance8.bat').
+- Code 3: Ghidra -> 0x3277d0 = manejador de error fatal de Decima (82 llamadores; vsnprintf en [rbp-0x1000], ud2 0x3278a0). probe.c fatal_exception imprime "Game fatal error: <mensaje>" (verifica bytes e8 10 f9 ff ff 0f 0b). 0x61b280 = carga de lump "cache:lumps/<n>.core" (r13 = objeto), ud2 0x61b534 si el lector la rechaza (EU CUSA00002 #47/#53): se imprime la ruta buscando un String Decima "cache:" en [rbp-0x100..-0xd8]. Launcher: hint_game_fatal muestra el mensaje.
+- #68 (RX 6600, crash con FSR 3.1/FG): el log adjunto es de una partida sin crash -> pedir log del crash.
+- #24 Arc B580 negro: overlay visible, menú 294 draws, campaña 3 draws (video?). Sin hardware; sospecha recompilador/subgrupos.
+- Próximo: "tanda shaders" de ps4_core (invalida caché una vez): backports BP03 ExecEmptyBranch, BP04 ClampOpsPlain, BP05 SaturateNan (NaN->0, candidato #51/#69 AMD violeta), BP06 MaximalReconvergence, BP11; lower_wave64 (ballots divergentes/ReadFirstLane, #64 fuego parpadea), host subgroup size 64 en GPUs que lo soportan (AMD RDNA), LOOP_LIMIT.
+
+## 2026-10-25 Validación #52/#62 + tanda shaders (sin commit, SIN PROBAR la tanda shaders)
+- Prueba GOW3_NO_MAINTENANCE8=1 (log 17-49-50): se dio el caso (1x1 vs 1x6 mips x capas, cubemap) y NO crasheó -> #52/#62 resuelto.
+- Rendimiento sin pageable (17-53-51): 47.4/39.3/35.9/32.6 vs base 51.4/43.3/37.0/33.8. Acquire fence ahora default OFF (GOW3_PRESENT_ACQUIRE_FENCE=1 la activa).
+- Tanda shaders: common/backports.h de ps4_core (entradas de shader fijas en su default, ignoran env porque no hay salt de caché). BP03 ExecEmptyBranch (control_flow_graph), BP04 ClampOpsPlain (V_LOG/RCP/RSQ_CLAMP, RSQ_LEGACY), BP05 SaturateNan (NMin(NMax)), BP06 maximal reconvergence (instance detecta extensión+feature, profile.supports_maximal_reconvergence, MaximallyReconvergesKHR en compute; log "GPU: maximal reconvergence on/off"). BP11 no (toca draws indirectos).
+- ShaderBinaryVersion 7 -> 8: la caché guarda solo SPIR-V -> todos reconstruyen la caché jugando (tirones una vez). Avisar en release notes.
+- Backup de caché del usuario: kz_work\cache_backup_20261025 (CUSA00190 + driver-CUSA00190).
+- Bat: kz_work\bats\'Prueba issues 2 - shaders (fuego, AMD).bat'.
+- Pendiente shaders: lower_wave64 de ps4_core (ballots divergentes, ReadFirstLane), host subgroup size 64, LOOP_LIMIT -> juntar con esta misma subida de versión si se puede (antes de release).
+- (cont.) Sumado a la misma subida de versión: lower_wave64_pass.cpp, shared_memory_barrier_pass.cpp, ir_passes.h y recompiler_toggles.h copiados de ps4_core (ballots divergentes en su mitad de 64 bits, ReadFirstLane del append, bucles uniformes, identidad de reducción BP06) + opcode SubgroupBarrier (opcodes.inc, ir_emitter, microinstruction, EmitSubgroupBarrier). Toggles LDS/LANE_DIVERGENCE/RFL_ALL default off; su salt entra en CurrentShaderBinaryVersion (+64*Toggles::ShaderBinarySalt) -> se pueden probar por env sin romper la caché. LOOP_LIMIT no portado (falta emit_spirv).
+- Caché del usuario = 33 GB de .spv (decenas de miles). Backup con robocopy /MT:16 en kz_work\cache_backup_20261025 (2 min; cp de msys tardaba >10 min).
+
+## 2026-10-25 Resultado shaders + issues chicos + LOD (sin commit, build en stage)
+- Tanda shaders (logs 18-34-47 / 18-42-46, 2ª pasada con caché): 47.5/48.1/40.8/38.8 FPS vs base 51.4/43.3/37.0/33.8 -> +4-5 FPS en escenas medias/pesadas; sin errores. Usuario: falta confirmar fuego (#64).
+- #59 FOV hasta 200% (launcher FOV_MAX, gow3_settings clamp, slider menú).
+- #70 actualización: el mensaje de versión era falso; faltaba eboot.bin (extractor con un nivel extra). update_folder_root() busca sce_sys/param.sfo un nivel adentro (check_game y GOW3_PATCH_DIR); mensaje propio update_no_eboot.
+- #72 dlcldr.prx en la raíz: link_modules.py saltea módulos dinámicos con TLS/initializers (solo all_programs.prx es del juego).
+- #61 LOD (Ghidra): ViewportSetup (RTTI 0x17c4b10) copiado por 0xdca7f0 al renderer [0x3c3ffe0]: +0x1f7c FOVMultiplier, +0x1f84 LOD fading (inv), +0x1f88 LODDistanceMultiplier, +0x1f8c LowLODDistanceMultiplier (default 1.0 en 0xdc40d0). 0xdc67e0 los carga en 0xdc697d..0xdc6999 (4 instr, 28 bytes) y en 0xdc69d0 multiplica el factor de distancia. Hook install_lod_distance: stub replay con vmulss por celda (lod_distance/100). Ajuste lod_distance 50..300 (gow3.ini, GOW3_LOD_DISTANCE, menú Insert "Level of detail" en vivo, launcher Gráficos "Distancia de detalle" 50/75/100/150/200/300).
+- Bat: kz_work\bats\'Prueba final - antes del commit.bat'.
+
+## 2026-10-25 v0.6.0 + PENDIENTES PARA LA PRÓXIMA SESIÓN
+- LOD: el juego DIVIDE las distancias por su multiplicador (usuario: 300% se veía peor y +15-20 FPS) -> celda = 100/lod_distance (LodScale en gow3_overlay.cpp). Sin probar la dirección corregida.
+- Usuario: fuego/humo siempre se le vio bien (NVIDIA) -> #64 y #51/#69 dependen de feedback.
+PENDIENTES:
+1. Confirmar con usuarios: #51/#69 (AMD violeta), #64 (fuego), #56 (device lost), #35/#43 (4 GB), dirección del LOD.
+2. #24/#1 Intel Arc pantalla negra (overlay visible; menú 294 draws): pedir logs; probar toggles de shaders (GOW3_LANE_DIVERGENCE, GOW3_LDS_*), MSAA, subgroup size.
+3. #68 RX 6600 crash con FSR 3.1/FG: pedir el log del crash.
+4. Código 3: con el mensaje "Game fatal error" de los próximos logs, atacar la causa (0x3278a0). EU CUSA00002 (#47/#53/#57): lumps .core con prefijo 02 00 f0 57 antes de RTTIBin; ajustes trabados.
+5. #66 frame pacing, #63 combo del menú L2+R3 configurable, #67 idioma del juego desde el port, más idiomas del launcher.
+6. Próxima subida de caché de shaders (juntar): LOOP_LIMIT (emit_spirv), host subgroup size 64 (AMD RDNA), BP11, scalar_alu WQM.
+7. Tirones: COMPUTE_ASYNC_BUILD y GFX_DEFERRED_BIND de ps4_core; SpartanPort b776be7 (caché de shaders / readback waits).
+8. Opciones gráficas extra (RTTI ya mapeado): sombras CascadeCount 0x1618ed0+0xc8, ShadowMapSize, partículas LightSamplingResolution/ParticleRate, SSAO; LODFadingEnabled (+0x1f84).
+9. CPUs de 4 hilos: ver si JobSched_N hacen spin como los WorkerThread de GoW3.
+10. Linux AppImage (después de issues); cursor de mouse en menús (último).
+11. README: reemplazar docs/images/launcher.png por captura del launcher nuevo.
+12. Borrar kz_work\cache_backup_20261025 (33 GB) cuando 0.6.0 esté confirmada.
