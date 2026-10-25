@@ -7,6 +7,8 @@
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
+#include <string_view>
+
 #include <boost/container/small_vector.hpp>
 
 namespace Shader {
@@ -24,6 +26,11 @@ static constexpr auto AllGraphicsStageBits =
 class Instance;
 class Scheduler;
 class DescriptorHeap;
+
+/// gow3 (ps4_core): whether creating a pipeline that failed with `result` on `attempt` (from 1)
+/// is tried again, after waiting a little longer each time for the driver to recover.
+bool RetryPipelineCreation(vk::Result result, u32 attempt, std::string_view kind,
+                           std::string_view name);
 
 class Pipeline {
 public:
@@ -58,7 +65,10 @@ public:
     }
 
     using DescriptorWrites = std::vector<vk::WriteDescriptorSet>;
-    void BindResources(DescriptorWrites& set_writes, const Shader::PushData& push_data) const;
+    /// gow3: `count` of `set_writes` are this draw's writes; the vector may hold more (the pool
+    /// in vk_rasterizer.cpp keeps its storage between draws, SetWritePool).
+    void BindResources(DescriptorWrites& set_writes, u32 count,
+                       const Shader::PushData& push_data) const;
 
 protected:
     [[nodiscard]] std::string GetDebugString() const;

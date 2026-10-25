@@ -181,6 +181,7 @@ class Api:
                        [f"-2 ({t('mip_sharper')})", f"-1 ({t('mip_sharper')})", f"-0.5 ({t('mip_sharper')})",
                         t('mip_game'), f"+0.5 ({t('mip_softer')})", f"+1 ({t('mip_softer')})",
                         f"+2 ({t('mip_softer')})"], 'mip_bias_help'),
+                select('lod_distance', 'lod_distance', c.LOD_DISTANCES, t('lod_labels'), 'lod_distance_help'),
             ]},
             {'title': t('sec_effects'), 'help': t('effects_help'), 'grid': True, 'items': [
                 toggle(k, k) for k in ('motion_blur', 'depth_of_field', 'bloom', 'film_grain', 'camera_shake')]},
@@ -202,7 +203,7 @@ class Api:
                     toggle('mouse_invert', 'mouse_invert'),
                 ]},
                 {'title': t('sec_prompts'), 'items': [
-                    select('prompt_style', 'prompt_style', [0, 1, 2], t('prompt_styles'), 'prompt_style_help')]},
+                    select('prompt_style', 'prompt_style', [0, 1, 2, 3], t('prompt_styles'), 'prompt_style_help')]},
             ]},
             {'id': 'pad', 'title': t('sub_pad'), 'sections': [
                 {'type': 'pads', 'help': t('controller_help'), 'groups': groups,
@@ -582,7 +583,7 @@ class Api:
         self.cache_size()
         # 0: closed normally; 1 with an empty error log: the window was closed by the player.
         if code not in (0, None):
-            self._emit('message', {'text': c.tr('game_ended', code=code), 'level': 'error', 'logs': True})
+            self._emit('message', {'text': c.game_ended_text(code, self._run_dir), 'level': 'error', 'logs': True})
 
     # -- page events --------------------------------------------------------------------------
 

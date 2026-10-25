@@ -101,9 +101,11 @@ uintptr_t runtime_pad_resolve(const char *name);
 void runtime_pad_report(void);
 /* probe --gamepad: prints one "Gamepad:" line for the first pad found (returns 1) or none (0). */
 int runtime_pad_describe(void);
-/* Button prompts (src/prompt_hook.h): keyboard/mouse icons wanted now; key bound to a prompt icon. */
-int runtime_pad_prompts_pc(void);
+/* Button prompts (src/prompt_hook.h): the icon set wanted now (0 keyboard/mouse, 1 Xbox, -1 PS4);
+ * key or Xbox button bound to a prompt icon. */
+int runtime_pad_prompt_set(void);
 int runtime_pad_prompt_binding(unsigned icon, char *label, size_t size);
+int runtime_pad_prompt_xbox_binding(unsigned icon, char *label, size_t size);
 /* Free camera (src/free_camera_hook.h): while active the game reads a neutral pad and the camera
  * takes the input. move: right, up, forward (-1..1); look: yaw, pitch (rad, since the last call)
  * and yaw/pitch rates (rad/s); speed: m/s. keys: bit 0 F9 (toggle) pressed, bit 1 F10 (recenter)

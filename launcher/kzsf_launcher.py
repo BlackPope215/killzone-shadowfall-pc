@@ -41,7 +41,7 @@ FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 
-VERSION = '0.5.0'
+VERSION = '0.6.0'
 TITLE_ID = 'CUSA00190'
 # Other releases of the game players run (their languages), accepted untested: the port was built and
 # tested on CUSA00190. Every one must be at version 01.81.
@@ -119,6 +119,8 @@ TEXTS = {
         'other_region_jp': 'Versión {id} (japonesa): no probada (el port se desarrolló y probó en CUSA00190); los textos en japonés pueden verse mal o faltar.',
         'need_update': 'Versión {ver}: falta la actualización {want}.',
         'bad_update': 'La carpeta de actualización no es {want} versión {ver_want} (es {id} {ver}).',
+        'update_no_eboot': 'La actualización es la correcta, pero falta eboot.bin en {folder}. '
+                           'Volvé a extraer el PKG de la actualización completo.',
         'ready': 'Listo: {title} · {id} · versión {ver}',
         'ready_update': 'Listo: {title} · {id} · versión {ver} (con actualización)',
         'fov': 'Campo de visión (FOV)',
@@ -157,6 +159,12 @@ TEXTS = {
         'mip_bias': 'Nitidez de texturas lejanas', 'mip_game': 'La del juego',
         'mip_sharper': 'más nítida', 'mip_softer': 'más suave',
         'mip_bias_help': 'Más nítida: más detalle lejano, algo de parpadeo. Más suave: lo contrario.',
+        'lod_distance': 'Distancia de detalle (LOD)',
+        'lod_labels': ['50% (más rendimiento)', '75%', '100% (como en PS4)', '150%', '200%',
+                       '300% (menos pop-in)'],
+        'lod_distance_help': 'Hasta qué distancia personajes y objetos mantienen su versión detallada. '
+                             'Más alto: menos aparición repentina de detalle, más carga de GPU y CPU. '
+                             'Se puede cambiar en el juego (Insert).',
         'sharpen': 'Nitidez (RCAS)', 'show_fps': 'Mostrar FPS en pantalla',
         'fsr1': 'Escalado FSR 1',
         'fsr1_help': 'Para pantallas de más de 1080p (1440p, 4K): imagen más nítida que el estirado normal. '
@@ -182,9 +190,10 @@ TEXTS = {
                           'Altavoz del mando: sonidos que la PS4 manda al parlante del mando; acá suenan '
                           'por tus parlantes (0% = apagado).',
         'prompt_style': 'Íconos de botones en el juego',
-        'prompt_styles': ['Último dispositivo usado', 'Teclado y mouse', 'PS4'],
-        'prompt_style_help': 'Los avisos del juego muestran la tecla asignada (o el mouse) en vez del botón de PS4. '
-                             'Los sticks y el touchpad siguen con el ícono de PS4.',
+        'prompt_styles': ['Automático (último dispositivo y tipo de mando)', 'Teclado y mouse', 'PS4', 'Xbox'],
+        'prompt_style_help': 'Los avisos del juego muestran la tecla asignada (o el mouse), o los botones de Xbox, '
+                             'en vez del botón de PS4. En automático, un mando de PlayStation muestra PS4 y '
+                             'cualquier otro, Xbox. Los sticks siguen con el ícono de PS4.',
         'mouse': 'Mouse', 'mouse_look': 'Apuntar con el mouse',
         'mouse_look_help': 'El mouse mueve la cámara 1:1, sin la zona muerta ni el tope de un stick '
                            '(sensibilidad recomendada: alrededor de 1); click izquierdo dispara (R2), derecho '
@@ -259,6 +268,15 @@ TEXTS = {
         'reset_all_confirm': '¿Volver todas las opciones gráficas, avanzadas y de controles a los valores por defecto?',
         'language': 'Idioma',
         'game_ended': 'El juego se cerró con un error (código {code}).\n\n¿Abrir la carpeta de logs para ver qué pasó?',
+        'hint_memory': 'Windows no pudo reservar la memoria del juego. Agrandá el archivo de paginación '
+                       '(o dejalo administrado por Windows) y cerrá otros programas pesados.',
+        'hint_vram': 'La placa de video se quedó sin memoria (VRAM). Bajá la resolución, desactivá '
+                     'la generación de frames y usá un escalador en modo Rendimiento.',
+        'hint_device_lost': 'El driver de video reinició la GPU (dispositivo perdido). Actualizá el driver; '
+                            'si sigue pasando, desactivá la generación de frames y FSR 4/DLSS.',
+        'hint_game_fatal': 'El juego se detuvo con este error: {message}',
+        'hint_gpu_assert': 'Falló una comprobación del renderizador. Si se repite en el mismo lugar, '
+                           'reportalo en GitHub con los dos archivos de log.',
         'cant_start': 'No se pudo iniciar el juego:\n{error}',
         'fix_folder': 'Primero elegí una carpeta del juego válida (pestaña Juego).',
         'footer_hint': 'Port nativo para Windows · usa tu propio dump',
@@ -298,6 +316,8 @@ TEXTS = {
         'other_region_jp': 'Release {id} (Japanese): untested (the port was built and tested on CUSA00190); Japanese texts may look wrong or be missing.',
         'need_update': 'Version {ver}: update {want} is missing.',
         'bad_update': 'The update folder is not {want} version {ver_want} (it is {id} {ver}).',
+        'update_no_eboot': 'The update is the right one, but eboot.bin is missing in {folder}. '
+                           'Extract the whole update PKG again.',
         'ready': 'Ready: {title} · {id} · version {ver}',
         'ready_update': 'Ready: {title} · {id} · version {ver} (with update)',
         'fov': 'Field of view (FOV)',
@@ -336,6 +356,10 @@ TEXTS = {
         'mip_bias': 'Distant texture sharpness', 'mip_game': 'Game default',
         'mip_sharper': 'sharper', 'mip_softer': 'softer',
         'mip_bias_help': 'Sharper: more distant detail, a bit of shimmer. Softer: the opposite.',
+        'lod_distance': 'Detail distance (LOD)',
+        'lod_labels': ['50% (faster)', '75%', '100% (as on PS4)', '150%', '200%', '300% (less pop-in)'],
+        'lod_distance_help': 'How far characters and objects keep their detailed version. Higher: less '
+                             'pop-in, more GPU and CPU load. Can be changed in game (Insert).',
         'sharpen': 'Sharpening (RCAS)', 'show_fps': 'Show FPS on screen',
         'fsr1': 'FSR 1 upscaling',
         'fsr1_help': 'For screens above 1080p (1440p, 4K): sharper than plain stretching. No change at 1080p.',
@@ -360,9 +384,10 @@ TEXTS = {
                           'Controller speaker: sounds the PS4 sends to the controller speaker; here they '
                           'play on your speakers (0% = off).',
         'prompt_style': 'In-game button icons',
-        'prompt_styles': ['Last device used', 'Keyboard and mouse', 'PS4'],
-        'prompt_style_help': 'Game prompts show the bound key (or the mouse) instead of the PS4 button. '
-                             'Sticks and the touchpad keep their PS4 icons.',
+        'prompt_styles': ['Automatic (last device and controller type)', 'Keyboard and mouse', 'PS4', 'Xbox'],
+        'prompt_style_help': 'Game prompts show the bound key (or the mouse), or Xbox buttons, instead of the '
+                             'PS4 button. On automatic, a PlayStation controller shows PS4 and any other one '
+                             'Xbox. Sticks keep their PS4 icons.',
         'mouse': 'Mouse', 'mouse_look': 'Aim with the mouse',
         'mouse_look_help': "The mouse moves the camera 1:1, without a stick's dead zone or limit (recommended "
                            'sensitivity: about 1); left click fires (R2), right click aims (L2). Fast turns '
@@ -437,6 +462,15 @@ TEXTS = {
         'reset_all_confirm': 'Set every graphics, advanced and control option back to its default?',
         'language': 'Language',
         'game_ended': 'The game closed with an error (code {code}).\n\nOpen the logs folder to see what happened?',
+        'hint_memory': 'Windows could not reserve the game memory. Enlarge the page file (or let '
+                       'Windows manage it) and close other heavy programs.',
+        'hint_vram': 'The graphics card ran out of memory (VRAM). Lower the resolution, turn off frame '
+                     'generation and use an upscaler in Performance mode.',
+        'hint_device_lost': 'The graphics driver reset the GPU (device lost). Update the driver; if it '
+                            'keeps happening, turn off frame generation and FSR 4/DLSS.',
+        'hint_game_fatal': 'The game stopped with this error: {message}',
+        'hint_gpu_assert': 'A renderer check failed. If it happens again at the same place, report it '
+                           'on GitHub with both log files.',
         'cant_start': 'The game could not start:\n{error}',
         'fix_folder': 'Choose a valid game folder first (Game tab).',
         'footer_hint': 'Native Windows port · uses your own dump',
@@ -445,6 +479,34 @@ TEXTS = {
     },
 }
 LANG = 'es'
+
+
+def crash_hint(run_dir):
+    """A likely cause of a crash from the run's errors.log, as a sentence for the player, or ''."""
+    try:
+        text = (Path(run_dir) / 'errors.log').read_text(encoding='utf-8', errors='replace')[-200000:]
+    except OSError:
+        return ''
+    # The game's own fatal error message (probe.c prints it from Killzone's error handler).
+    for line in text.splitlines():
+        if line.startswith('Game fatal error: '):
+            return tr('hint_game_fatal', message=line[len('Game fatal error: '):].strip()[:300])
+    checks = (
+        ('hint_memory', ('of guest memory', 'page file large enough')),
+        ('hint_vram', ('ErrorOutOfDeviceMemory', 'OutOfDeviceMemory', 'out of video memory')),
+        ('hint_device_lost', ('ErrorDeviceLost', 'DeviceLost', 'Device lost')),
+        ('hint_gpu_assert', ('GPU library assertion failed',)),
+    )
+    for key, needles in checks:
+        if any(needle in text for needle in needles):
+            return tr(key)
+    return ''
+
+
+def game_ended_text(code, run_dir):
+    """The crash message with a hint at its likely cause."""
+    hint = crash_hint(run_dir) if run_dir else ''
+    return tr('game_ended', code=code) + (f'\n\n{hint}' if hint else '')
 
 
 def tr(key, **values):
@@ -515,6 +577,19 @@ def read_sfo(path):
     return read(path)
 
 
+def update_folder_root(update_dir):
+    """The folder of the update that holds sce_sys/param.sfo: the chosen one, or the one folder
+    inside it that does (some PKG extractors add a level, issue #70)."""
+    root = Path(update_dir)
+    if (root / 'sce_sys' / 'param.sfo').is_file():
+        return root
+    try:
+        inner = [d for d in root.iterdir() if d.is_dir() and (d / 'sce_sys' / 'param.sfo').is_file()]
+    except OSError:
+        inner = []
+    return inner[0] if len(inner) == 1 else root
+
+
 def check_game(game_dir, update_dir):
     """(ok, message, needs_update): whether these folders hold Killzone Shadow Fall 01.81."""
     if not game_dir:
@@ -537,10 +612,13 @@ def check_game(game_dir, update_dir):
         return True, tr('ready', title=title, id=title_id, ver=version) + other, False
     if not update_dir:
         return False, tr('need_update', ver=version, want=GAME_VERSION), True
-    update = read_sfo(Path(update_dir) / 'sce_sys' / 'param.sfo') or {}
-    up_id, up_ver = str(update.get('TITLE_ID', '?')), str(update.get('APP_VER', '?'))
-    if up_id not in TITLE_IDS or up_ver != GAME_VERSION or not (Path(update_dir) / 'eboot.bin').is_file():
+    update_root = update_folder_root(update_dir)
+    update = read_sfo(update_root / 'sce_sys' / 'param.sfo') or {}
+    up_id, up_ver = str(update.get('TITLE_ID', '?')).strip(), str(update.get('APP_VER', '?')).strip()
+    if up_id not in TITLE_IDS or up_ver != GAME_VERSION:
         return False, tr('bad_update', want=title_id, ver_want=GAME_VERSION, id=up_id, ver=up_ver), True
+    if not (update_root / 'eboot.bin').is_file():
+        return False, tr('update_no_eboot', folder=str(update_root)), True
     return True, tr('ready_update', title=title, id=title_id, ver=up_ver) + other, True
 
 
@@ -554,7 +632,7 @@ def clean_title(title):
 
 GRAPHICS_DEFAULTS = {
     'display_mode': 'windowed', 'render_resolution': 'native', 'fps_limit': '60', 'vsync': '1', 'anisotropy': '16',
-    'rcas': '0', 'fsr1': '0', 'mip_lod_bias': '0',
+    'rcas': '0', 'fsr1': '0', 'mip_lod_bias': '0', 'lod_distance': '100',
     'show_fps': '0', 'vibration': '100', 'async_shaders': '1', 'stale_readback': '1',
     'deferred_readback': '1', 'frames_queued': '1',
     'motion_blur': '1', 'depth_of_field': '1', 'bloom': '1', 'film_grain': '1', 'camera_shake': '1',
@@ -613,6 +691,7 @@ EXPERIMENTAL_FPS = ('144', '240', '0')
 RENDER_RESOLUTIONS = ('720p', 'native', '1440p', '1800p', '4K')  # patches/Killzone_Shadow_Fall.xml
 ANISOTROPY = ('0', '2', '4', '8', '16')
 MIP_BIASES = ('-2.0', '-1.0', '-0.5', '0', '0.5', '1.0', '2.0')
+LOD_DISTANCES = ('50', '75', '100', '150', '200', '300')
 FRAMES_QUEUED = ('1', '2', '0')
 
 # PS4 button, label, default key (SDL scancode name) and default controller button (SDL name).
@@ -657,7 +736,7 @@ for _digit, _name in enumerate(('KP_Insert', 'KP_End', 'KP_Down', 'KP_Next', 'KP
     TK_TO_SDL[f'KP_{_digit}'] = f'Keypad {_digit}'
 
 
-FOV_MIN, FOV_MAX = 80, 150
+FOV_MIN, FOV_MAX = 80, 200
 
 
 def fov_percent(value):
@@ -767,6 +846,11 @@ def load_graphics():
     except ValueError:
         bias = 0.0
     values['mip_lod_bias'] = min(MIP_BIASES, key=lambda b: abs(float(b) - bias))
+    try:
+        lod = float(values['lod_distance'])
+    except ValueError:
+        lod = 100.0
+    values['lod_distance'] = min(LOD_DISTANCES, key=lambda d: abs(float(d) - lod))
     if values['frames_queued'] not in FRAMES_QUEUED:
         values['frames_queued'] = '1'
     return values
@@ -949,7 +1033,7 @@ def game_env(settings, graphics, needs_update):
         env.pop('GOW3_VBLANK_HZ', None)
         env.pop('GOW3_FPS_LIMIT', None)
     if needs_update and settings['update_dir']:
-        env['GOW3_PATCH_DIR'] = settings['update_dir']
+        env['GOW3_PATCH_DIR'] = str(update_folder_root(settings['update_dir']))
     else:
         env.pop('GOW3_PATCH_DIR', None)
     return env
@@ -1487,6 +1571,8 @@ class Launcher:
                      f"+2 ({tr('mip_softer')})"],
                     self.graphics['mip_lod_bias'], lambda v: self.set_graphic('mip_lod_bias', v),
                     tr('mip_bias_help'))
+        self.choice(parent, tr('lod_distance'), LOD_DISTANCES, tr('lod_labels'), self.graphics['lod_distance'],
+                    lambda v: self.set_graphic('lod_distance', v), tr('lod_distance_help'))
         self.tk.Frame(parent, bg=PANEL, height=self.px(8)).pack()
         self.check(parent, tr('vsync'), 'vsync', tr('vsync_help'))
         self.check(parent, tr('fsr1'), 'fsr1', tr('fsr1_help'))
@@ -1546,7 +1632,7 @@ class Launcher:
             combo.grid(row=r, column=col + 2, sticky='w', padx=(self.px(6), 0), pady=self.px(1))
             combo.bind('<<ComboboxSelected>>', lambda e, n=name, c=combo: self.set_pad(n, values[c.current()]))
         self.mouse_section(parent)
-        self.choice(parent, tr('prompt_style'), [0, 1, 2], tr('prompt_styles'),
+        self.choice(parent, tr('prompt_style'), [0, 1, 2, 3], tr('prompt_styles'),
                     int(self.settings.get('prompt_style', 0)), self.prompt_style_changed, tr('prompt_style_help'))
         bottom = tk.Frame(parent, bg=PANEL)
         bottom.pack(fill='x', pady=(self.px(8), 0))
@@ -1979,7 +2065,7 @@ class Launcher:
         if getattr(self, 'cache_note', None) is not None and self.cache_note.winfo_exists():
             self.refresh_cache_size()
         # 0: closed normally; 1 with an empty error log: the window was closed by the player.
-        if code not in (0, None) and self.messagebox.askyesno('Killzone Shadow Fall', tr('game_ended', code=code),
+        if code not in (0, None) and self.messagebox.askyesno('Killzone Shadow Fall', game_ended_text(code, run_dir),
                                                                parent=self.root):
             open_folder(run_dir)
 

@@ -366,15 +366,24 @@ static uint32_t quick_menu_buttons(SDL_Gamepad *g, uint64_t now) {
     return now<back_hold.tap_until ? ps : 0;
 }
 /* Button prompts (src/prompt_hook.h): the device last used, 1 keyboard/mouse, 2 gamepad (0 none
- * yet: keyboard unless a gamepad is connected). */
+ * yet: keyboard unless a gamepad is connected), and whether that gamepad is a PlayStation one. */
 static int prompt_device;
+static int prompt_pad_playstation=1;
 static int far_from_center(uint8_t x, uint8_t y) { return x<64 || x>192 || y<64 || y>192; }
 
-/* Whether gameplay prompts show the keyboard and mouse (the menu's Button prompts setting). */
-int runtime_pad_prompts_pc(void) {
-    if (input.prompt_style) return input.prompt_style==1;
+/* The icons gameplay prompts show (the menu's Button prompts setting: 0 auto, 1 keyboard, 2 PS4,
+ * 3 Xbox): GOW3_PROMPT_SET_KEYBOARD, GOW3_PROMPT_SET_XBOX or -1 for the game's PS4 ones. Auto
+ * follows the device last used, and a gamepad's own family. */
+int runtime_pad_prompt_set(void) {
+    switch (input.prompt_style) {
+    case 1: return 0;
+    case 2: return -1;
+    case 3: return 1;
+    default: break;
+    }
     const int device=__atomic_load_n(&prompt_device,__ATOMIC_RELAXED);
-    return device ? device==1 : !gamepad;
+    if (device ? device==1 : !gamepad) return 0;
+    return __atomic_load_n(&prompt_pad_playstation,__ATOMIC_RELAXED) ? -1 : 1;
 }
 
 /* The key or mouse button bound to a prompt icon (the game's EIconType, not the pad bits): 1 and
@@ -424,6 +433,39 @@ int runtime_pad_prompt_binding(unsigned icon, char *label, size_t size) {
     return 1;
 }
 
+/* The Xbox button pressing a prompt icon's PS4 button (the pad map, GOW3_PAD_MAP): 4 and its
+ * label (A B X Y LB RB LT RT LS RS MENU VIEW UP DOWN LEFT RIGHT), 0 when it keeps the PS4 icon. */
+int runtime_pad_prompt_xbox_binding(unsigned icon, char *label, size_t size) {
+    static const uint32_t buttons[16]={BTN_TRIANGLE,BTN_CIRCLE,BTN_CROSS,BTN_SQUARE,
+        BTN_L2,BTN_R2,BTN_L1,BTN_R1,BTN_OPTIONS,BTN_TOUCHPAD,BTN_L3,BTN_R3,BTN_UP,BTN_RIGHT,BTN_DOWN,BTN_LEFT};
+    static const struct { int source; const char *label; } names[]={
+        {SDL_GAMEPAD_BUTTON_SOUTH,"A"}, {SDL_GAMEPAD_BUTTON_EAST,"B"}, {SDL_GAMEPAD_BUTTON_WEST,"X"},
+        {SDL_GAMEPAD_BUTTON_NORTH,"Y"}, {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,"LB"}, {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,"RB"},
+        {SDL_GAMEPAD_BUTTON_LEFT_STICK,"LS"}, {SDL_GAMEPAD_BUTTON_RIGHT_STICK,"RS"}, {SDL_GAMEPAD_BUTTON_START,"MENU"},
+        {SDL_GAMEPAD_BUTTON_BACK,"VIEW"}, {SDL_GAMEPAD_BUTTON_TOUCHPAD,"VIEW"},
+        {SDL_GAMEPAD_BUTTON_DPAD_UP,"UP"}, {SDL_GAMEPAD_BUTTON_DPAD_DOWN,"DOWN"},
+        {SDL_GAMEPAD_BUTTON_DPAD_LEFT,"LEFT"}, {SDL_GAMEPAD_BUTTON_DPAD_RIGHT,"RIGHT"}};
+    if (!label || size<6 || icon>=16) return 0;
+    label[0]=0;
+    load_button_maps();
+    const char *name=NULL;
+    /* The triggers always press L2/R2 through their axes. */
+    if (buttons[icon]==BTN_L2) name="LT";
+    if (buttons[icon]==BTN_R2) name="RT";
+    /* The touchpad is clicked with View (its right side) on pads without one. */
+    for (int pass=0;pass<3 && !name;++pass) {
+        const uint32_t ps=pass==0 ? buttons[icon] : buttons[icon]!=BTN_TOUCHPAD ? 0 : pass==1 ? CLICK_LEFT : CLICK_RIGHT;
+        for (size_t i=0;ps && i<pad_map.count && !name;++i) {
+            if (pad_map.entries[i].ps!=ps) continue;
+            for (size_t j=0;j<sizeof(names)/sizeof(*names);++j)
+                if (names[j].source==pad_map.entries[i].source) { name=names[j].label; break; }
+        }
+    }
+    if (!name) return 0;
+    memcpy(label,name,strlen(name)+1);
+    return 4;
+}
+
 static void sample_host(PadData *d) {
     memset(d,0,sizeof(*d));
     d->left_x=d->left_y=d->right_x=d->right_y=128;
@@ -457,6 +499,13 @@ static void sample_host(PadData *d) {
         if (d->buttons || d->l2>30 || d->r2>30 || far_from_center(d->left_x,d->left_y) ||
             far_from_center(d->right_x,d->right_y))
             __atomic_store_n(&prompt_device,2,__ATOMIC_RELAXED);
+        static SDL_Gamepad *typed;
+        if (typed!=g) {
+            const SDL_GamepadType type=SDL_GetGamepadType(g);
+            __atomic_store_n(&prompt_pad_playstation,type==SDL_GAMEPAD_TYPE_PS3 || type==SDL_GAMEPAD_TYPE_PS4 ||
+                             type==SDL_GAMEPAD_TYPE_PS5,__ATOMIC_RELAXED);
+            typed=g;
+        }
         if (SDL_GetNumGamepadTouchpads(g)>0) {
             const int fingers=SDL_GetNumGamepadTouchpadFingers(g,0);
             for (int finger=0;finger<fingers && d->touch_count<2;++finger) {

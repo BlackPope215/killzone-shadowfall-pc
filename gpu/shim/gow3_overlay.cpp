@@ -75,6 +75,8 @@ bool r3_down = false, l2_down = false;
 std::atomic<bool> quick_open{false};
 // The FOV hook's float (src/probe.c), rewritten when the FOV changes; null without the hook.
 std::atomic<float*> fov_cell{nullptr};
+// The LOD distance hook's float (src/probe.c), the setting / 100; null without the hook.
+std::atomic<float*> lod_cell{nullptr};
 // The camera shake hook's int (src/probe.c), kept equal to the setting; null without the hook.
 std::atomic<int*> shake_cell{nullptr};
 // The upscaler quality modes' scene size (src/scene_res_hook.h Gow3SceneSize: requested width and
@@ -135,6 +137,12 @@ void SetQuickOpen(bool value) {
         dirty = false;
         Gow3Settings::Save();
     }
+}
+
+// The LOD distance hook's factor: the game divides the LOD switch distances by its multiplier
+// (1.2 brings detail changes closer), so the setting (percent of the distance) is its inverse.
+float LodScale() {
+    return 100.0f / float(std::max(Gow3Settings::Get().lod_distance.load(), 1));
 }
 
 // pi/180 times the FOV scale: the hook multiplies the game's FOV (degrees) by it.
@@ -477,8 +485,8 @@ void ControlsTab() {
         ImGui::BeginDisabled(!fov_ready);
         Row("Field of view (FOV)");
         int fov = s.fov;
-        if (ImGui::SliderInt("##value", &fov, 80, 150, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
-            fov = std::clamp((fov + 2) / 5 * 5, 80, 150);
+        if (ImGui::SliderInt("##value", &fov, 80, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
+            fov = std::clamp((fov + 2) / 5 * 5, 80, 200);
             Store(s.fov, fov, fov != s.fov.load());
             ApplyFov();
         }
@@ -513,10 +521,11 @@ void ControlsTab() {
     }
     ImGui::SeparatorText("Keyboard and mouse");
     if (BeginRows("##prompts")) {
-        static const char* const prompt_labels[] = {"Last device used", "Keyboard and mouse", "PS4"};
-        ChoiceRow("Button prompts", s.prompt_style, prompt_labels, nullptr, 3,
-                  "Gameplay button icons: the keys bound to them (Controls in the launcher) or the PS4 "
-                  "buttons. Sticks and the touchpad keep their PS4 icons.");
+        static const char* const prompt_labels[] = {"Automatic", "Keyboard and mouse", "PS4", "Xbox"};
+        ChoiceRow("Button prompts", s.prompt_style, prompt_labels, nullptr, 4,
+                  "Gameplay button icons: the keys bound to them (Controls in the launcher), the PS4 "
+                  "buttons or Xbox ones. Automatic follows the last device used: a PlayStation controller "
+                  "shows PS4, any other one Xbox. Sticks keep their PS4 icons.");
         ImGui::EndTable();
     }
     ImGui::TextDisabled("OWL drone: hold Delete and move the mouse (a finger on the touchpad).");
@@ -682,6 +691,23 @@ void ImageTab() {
             }
             Help("Sharper: crisper textures at a distance, a little more shimmer. Softer: smoother.");
             ImGui::PopID();
+            ImGui::EndTable();
+        }
+        ImGui::SeparatorText("Level of detail");
+        if (BeginRows("##lod_live")) {
+            ImGui::BeginDisabled(lod_cell.load() == nullptr);
+            Row("Detail distance (LOD)");
+            int lod = s.lod_distance;
+            if (ImGui::SliderInt("##value", &lod, 50, 300, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
+                lod = std::clamp((lod + 5) / 10 * 10, 50, 300);
+                Store(s.lod_distance, lod, lod != s.lod_distance.load());
+            }
+            Help(lod_cell.load() ? "How far models keep their detailed versions (100% = as on PS4). Higher: "
+                                   "less pop-in of characters and objects, more GPU and CPU work. Lower: "
+                                   "faster, detail drops sooner."
+                                 : "Unavailable: the game's LOD code was not found in this eboot.bin.");
+            ImGui::PopID();
+            ImGui::EndDisabled();
             ImGui::EndTable();
         }
         ImGui::SeparatorText("Effects (applied on restart)");
@@ -1673,6 +1699,11 @@ void SetFovCell(float* cell) {
     ApplyFov();
 }
 
+void SetLodCell(float* cell) {
+    *cell = LodScale();
+    lod_cell = cell;
+}
+
 void SetShakeCell(int* cell) {
     *cell = Gow3Settings::Get().camera_shake.load() ? 1 : 0;
     shake_cell = cell;
@@ -1735,6 +1766,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     if (int* cell = shake_cell.load()) {
         *cell = Gow3Settings::Get().camera_shake.load() ? 1 : 0;
+    }
+    if (float* cell = lod_cell.load()) {
+        *cell = LodScale();
     }
     // Quality mode: a reduced size is requested in one store; the game's next frame makes the
     // scene targets again (src/scene_res_hook.h). Native waits for a restart.

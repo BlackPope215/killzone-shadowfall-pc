@@ -60,6 +60,8 @@ int gow3gpu_pad_speaker_percent(void);
 void gow3gpu_quick_menu_open(void);
 /* The FOV hook's float (pi/180 times the FOV scale) that the menu rewrites when the FOV changes. */
 void gow3gpu_fov_register(float *cell);
+/* The LOD distance hook's float (scale of the game's LOD distance multipliers) the menu rewrites. */
+void gow3gpu_lod_register(float *cell);
 /* Post-processing effects turned off in the settings, read once at start (they apply on restart):
  * bit 0 motion blur, 1 depth of field, 2 bloom, 3 film grain (src/postfx_hook.h). */
 unsigned gow3gpu_post_effects_off(void);

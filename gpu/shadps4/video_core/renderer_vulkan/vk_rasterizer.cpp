@@ -11,6 +11,7 @@
 #include "video_core/renderer_vulkan/vk_lighting_test.h"
 #include "video_core/renderer_vulkan/vk_pass_census.h"
 #include "common/debug.h"
+#include "common/hash.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
@@ -209,6 +210,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     if (DrawPipeWanted()) {
         constant_ring = std::make_unique<ConstantRing>(instance, scheduler);
         draw_pipe = std::make_unique<DrawPipe>(&RunDrawPacket, this);
+        scheduler.SetOwnerHook(&SchedulerOwnerHook, this);
     }
     // gow3: this thread joins the texture binding helper before it changes image state.
     runtime.SetImageAccessHook(&JoinBindHelper, this);
@@ -556,6 +558,31 @@ namespace {
 /// Stage A: cycles waited per drain site (GOW3_FRAME_STATS), keyed by function name and line.
 std::unordered_map<const char*, std::unordered_map<u32, u64>> drain_sites;
 } // namespace
+
+void Rasterizer::SchedulerOwnerHook(void* context, void* caller) {
+    auto* self = static_cast<Rasterizer*>(context);
+    const bool stage_a = self->OnStageA();
+    if (!self->draw_pipe || (stage_a && self->draw_pipe->Idle())) {
+        return;
+    }
+    // Each caller is reported once: the site that skipped DrainDrawPipe.
+    static std::mutex reported_mutex;
+    static std::unordered_set<void*> reported;
+    bool report;
+    {
+        std::scoped_lock lk{reported_mutex};
+        report = reported.insert(caller).second;
+    }
+    if (report) {
+        std::fprintf(stderr,
+                     "gow3: scheduler used %s while draw packets are in flight, from %p%s\n",
+                     stage_a ? "on the GPU command thread" : "by another thread", caller,
+                     stage_a ? "; draining first" : "");
+    }
+    if (stage_a) {
+        self->DrainDrawPipe(DrawPipe::ReasonRasterizer, __LINE__, __func__);
+    }
+}
 
 void Rasterizer::DrainDrawPipe(u32 reason, u32 line, const char* function) {
     if (!draw_pipe || !OnStageA()) {
@@ -1329,7 +1356,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             });
         }
     }
-    pipeline->BindResources(set_writes, push_data);
+    pipeline->BindResources(set_writes, set_write_index, push_data);
     // gow3: jitter geometry drawn with the scene depth, not full-screen passes (a shifted
     // full-screen quad leaves an edge column unwritten). Every G-buffer draw is jittered (Killzone
     // draws small 6-index quads there), and so is Killzone's depth pre-pass (SceneDepth).
@@ -1471,7 +1498,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     push_data.xoffset = push_data.xoffset * target_scale[0] + target_offset[0];
     push_data.yscale *= target_scale[1];
     push_data.yoffset = push_data.yoffset * target_scale[1] + target_offset[1];
-    pipeline->BindResources(set_writes, push_data);
+    pipeline->BindResources(set_writes, set_write_index, push_data);
     draw_jitter = {};
     if (upscaler->Enabled() && camera_motion->SceneDepth(db_desc.first)) {
         draw_jitter = upscaler->Jitter();
@@ -1574,7 +1601,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
 
     scheduler.EndRendering();
     mark();
-    pipeline->BindResources(set_writes, push_data);
+    pipeline->BindResources(set_writes, set_write_index, push_data);
 
     const vk::Pipeline handle = pipeline->Handle();
     const u32 dim_x = cs_program.dim_x, dim_y = cs_program.dim_y, dim_z = cs_program.dim_z;
@@ -1648,7 +1675,7 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
     }
 
     scheduler.EndRendering();
-    pipeline->BindResources(set_writes, push_data);
+    pipeline->BindResources(set_writes, set_write_index, push_data);
 
     const vk::Pipeline handle = pipeline->Handle();
     const vk::Buffer args = buffer->Handle();
@@ -1812,6 +1839,20 @@ void Rasterizer::JoinBindHelper(void* context) {
     }
 }
 
+bool Rasterizer::SetWritePool() {
+    // gow3 (ps4_core): GOW3_SET_WRITE_POOL=0 restores the per-draw clear and resize of the
+    // descriptor writes.
+    static const bool enabled = [] {
+        const char* env = std::getenv("GOW3_SET_WRITE_POOL");
+        const bool off = env && env[0] == '0';
+        if (off) {
+            std::printf("gow3: per-draw descriptor write pool off (GOW3_SET_WRITE_POOL=0)\n");
+        }
+        return !off;
+    }();
+    return enabled;
+}
+
 bool Rasterizer::BindResources(const Pipeline* pipeline) {
     if (IsComputeImageCopy(pipeline) || IsComputeMetaClear(pipeline) ||
         IsComputeImageClear(pipeline)) {
@@ -1820,7 +1861,9 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
 
     bind_pipeline = pipeline;
     set_write_index = 0;
-    set_writes.clear();
+    if (!SetWritePool()) {
+        set_writes.clear();
+    }
     buffer_infos.clear();
     image_infos.clear();
     // gow3: G-buffer passes sample material textures for a scene rendered below the output
@@ -1875,8 +1918,9 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
             if (!stage) {
                 continue;
             }
-            set_writes.resize(set_writes.size() + stage->buffers.size() + stage->images.size() +
-                              stage->samplers.size());
+            EnsureSetWrites(set_write_index + static_cast<u32>(stage->buffers.size() +
+                                                              stage->images.size() +
+                                                              stage->samplers.size()));
             stage->PushUd(binding, push_data);
             const PreparedStage* prepared = FindPreparedStage(*stage);
             BindBuffers(*stage, prepared, binding, push_data, set_write_index);
@@ -1905,7 +1949,7 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
             const u32 num_buffers = static_cast<u32>(stage->buffers.size());
             const u32 num_descriptors =
                 num_buffers + static_cast<u32>(stage->images.size() + stage->samplers.size());
-            set_writes.resize(set_writes.size() + num_descriptors);
+            EnsureSetWrites(set_write_index + num_descriptors);
             stage->PushUd(binding, push_data);
             const PreparedStage* prepared = FindPreparedStage(*stage);
             buffer_stages[task.count] = {stage, prepared, binding, set_write_index};
@@ -2501,6 +2545,8 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         set_write.descriptorCount = 1;
         set_write.descriptorType = vk::DescriptorType::eStorageBuffer;
         set_write.pBufferInfo = &buffer_infos.back();
+        set_write.pImageInfo = nullptr;
+        set_write.pTexelBufferView = nullptr;
         ++binding.buffer;
     }
 }
@@ -2562,8 +2608,10 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             set_write.descriptorCount = 1;
             set_write.descriptorType = vk::DescriptorType::eSampledImage;
             set_write.pImageInfo = &image_infos[first_image_idx + i];
+            set_write.pBufferInfo = nullptr;
+            set_write.pTexelBufferView = nullptr;
         }
-        BindSamplers(stage, prepared, binding, write_index);
+        BindSamplers(stage, prepared, binding, write_index, set_slot);
         return;
     }
     image_bindings.clear();
@@ -2820,26 +2868,75 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         set_write.descriptorType =
             is_storage ? vk::DescriptorType::eStorageImage : vk::DescriptorType::eSampledImage;
         set_write.pImageInfo = &image_infos[image_info_idx];
+        set_write.pBufferInfo = nullptr;
+        set_write.pTexelBufferView = nullptr;
 
         image_info_idx += array_size;
         image_binding_idx += array_size;
         binding.unified += array_size;
     }
 
-    BindSamplers(stage, prepared, binding, write_index);
+    BindSamplers(stage, prepared, binding, write_index, set_slot);
+}
+
+u64 Rasterizer::SamplerSetKey(const Shader::Info& stage, const PreparedStage* prepared) const {
+    // GetSampler's inputs: the S#s, the border color base, the per-sampler depth flags and the
+    // LOD bias of this draw (whether a sampler takes it follows from its S#).
+    const u32 count = static_cast<u32>(stage.samplers.size());
+    u64 key = count ? XXH3_64bits(prepared->sampler_sharps, count * sizeof(AmdGpu::Sampler)) : 0;
+    key = HashCombine(key, u64(Regs().ta_bc_base.base_addr));
+    key = HashCombine(key, u64(std::bit_cast<u32>(sampler_lod_bias)));
+    u32 depth_flags = 0;
+    for (u32 i = 0; i < count; ++i) {
+        depth_flags |= u32(stage.samplers[i].is_depth) << i;
+    }
+    return HashCombine(key, u64(depth_flags));
 }
 
 void Rasterizer::BindSamplers(const Shader::Info& stage, const PreparedStage* prepared,
-                              Shader::Backend::Bindings& binding, u32& write_index) {
-    for (u32 sampler_index = 0; sampler_index < stage.samplers.size(); ++sampler_index) {
+                              Shader::Backend::Bindings& binding, u32& write_index,
+                              TextureSet* set_slot) {
+    const u32 count = static_cast<u32>(stage.samplers.size());
+    // gow3 (ps4_core SamplerSetMemo): the set these textures were bound from resolved these
+    // samplers already, so reuse their handles instead of a hash and a map lookup per sampler.
+    // The LRU entries are still marked used, under TouchSamplers' one lock: the collector evicts
+    // by age, and a command recorded with a sampler is still in flight. TouchSamplers also drops
+    // the memo when a sampler was destroyed (its LRU ids may be gone or reused).
+    bool memo = false;
+    bool store = false;
+    if (set_slot != nullptr && set_slot->key != 0 && prepared != nullptr &&
+        !Gow3Toggle::Disabled(Gow3Toggle::SamplerSetMemo)) {
+        const u64 generation = texture_cache.SamplerGeneration();
+        const u64 key = SamplerSetKey(stage, prepared);
+        memo = set_slot->sampler_count == count && set_slot->sampler_key == key &&
+               set_slot->sampler_generation == generation &&
+               texture_cache.TouchSamplers(set_slot->sampler_lru_ids.data(), count, generation);
+        store = !memo;
+        if (store) {
+            set_slot->sampler_key = key;
+            set_slot->sampler_generation = generation;
+            set_slot->sampler_count = count;
+        }
+    }
+    for (u32 sampler_index = 0; sampler_index < count; ++sampler_index) {
         const auto& sampler = stage.samplers[sampler_index];
-        auto ssharp =
-            prepared ? prepared->sampler_sharps[sampler_index] : sampler.GetSharp(stage);
-        const auto vk_sampler = texture_cache.GetSampler(
-            ssharp, Regs().ta_bc_base, sampler.is_depth,
-            !sampler.is_depth && ssharp.mip_filter != AmdGpu::MipFilter::None && ssharp.MaxLod() > 0
-                ? sampler_lod_bias
-                : 0.0f);
+        vk::Sampler vk_sampler;
+        if (memo) {
+            vk_sampler = set_slot->samplers[sampler_index];
+        } else {
+            const auto ssharp =
+                prepared ? prepared->sampler_sharps[sampler_index] : sampler.GetSharp(stage);
+            vk_sampler = texture_cache.GetSampler(
+                ssharp, Regs().ta_bc_base, sampler.is_depth,
+                !sampler.is_depth && ssharp.mip_filter != AmdGpu::MipFilter::None &&
+                        ssharp.MaxLod() > 0
+                    ? sampler_lod_bias
+                    : 0.0f,
+                store ? &set_slot->sampler_lru_ids[sampler_index] : nullptr);
+            if (store) {
+                set_slot->samplers[sampler_index] = vk_sampler;
+            }
+        }
         image_infos.emplace_back(vk_sampler, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);
         auto& set_write = set_writes[write_index++];
         set_write.dstSet = VK_NULL_HANDLE;
@@ -2848,6 +2945,8 @@ void Rasterizer::BindSamplers(const Shader::Info& stage, const PreparedStage* pr
         set_write.descriptorCount = 1;
         set_write.descriptorType = vk::DescriptorType::eSampler;
         set_write.pImageInfo = &image_infos.back();
+        set_write.pBufferInfo = nullptr;
+        set_write.pTexelBufferView = nullptr;
     }
 }
 
@@ -2937,7 +3036,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
         }
     }
     ++texture_set_hits;
-    slot = nullptr;
+    // `slot` stays the hit set: BindSamplers reuses the samplers it resolved (SamplerSetMemo).
     for (u32 i = 0; i < count; ++i) {
         const auto& entry = set.entries[i];
         if (!entry.id) {

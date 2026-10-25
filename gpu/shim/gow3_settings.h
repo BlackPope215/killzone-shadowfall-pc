@@ -84,10 +84,11 @@ struct Values {
     std::atomic<float> mouse_sens{1.0f};      ///< mouse look sensitivity, 0.2..4
     std::atomic<int> mouse_turn_boost{6};     ///< "fast turns": turn speed factor while the mouse moves, 1..12
     std::atomic<bool> mouse_invert{false};
+    std::atomic<int> lod_distance{100};       ///< LOD distance percent, 50..300 (src/probe.c LOD hook)
     std::atomic<int> fov{100};                ///< horizontal FOV percent, 80..150 (src/probe.c FOV hook)
     std::atomic<int> pad_dead_zone{0};        ///< extra stick dead zone percent, 0..30
     std::atomic<int> pad_speaker{100};        ///< controller speaker sounds percent
-    std::atomic<int> prompt_style{0};         ///< button prompts: 0 auto, 1 keyboard/mouse, 2 PS4
+    std::atomic<int> prompt_style{0};         ///< button prompts: 0 auto, 1 keyboard/mouse, 2 PS4, 3 Xbox
     std::atomic<bool> quick_menu{true};       ///< hold Select/Back/Share: quick menu (Resume / Exit)
     std::atomic<bool> quick_menu_hint{true};  ///< startup reminder of that shortcut
     /// Set when the in-game menu changed the upscaler or frame generation: the launcher adopts

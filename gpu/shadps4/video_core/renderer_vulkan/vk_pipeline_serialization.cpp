@@ -17,6 +17,7 @@
 #include <windows.h>
 #include <psapi.h>
 #endif
+#include "shader_recompiler/recompiler_toggles.h"
 #include "common/serdes.h"
 #include "common/scope_exit.h"
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
@@ -35,7 +36,7 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 7u; // gow3: interpolated integer fix (Pascal)
+static constexpr u32 ShaderBinaryVersion = 8u; // gow3: ps4_core backports BP03/04/05/06 (2026-10-25)
 static constexpr u32 ShaderMetaVersion = 7u; // gow3: ImageResource::needs_native
 static constexpr u32 PipelineKeyVersion = 5u; // gow3: Info layout (ImageResource::needs_native)
 } // namespace Serialization
@@ -45,11 +46,15 @@ namespace Vulkan {
 namespace {
 // gow3: the test knobs that change recompiled SPIR-V (GOW3_LIGHTING_TEST=dref,
 // GOW3_AMD_PATHS_OFF=shaderext) get their own shader binary cache version.
+// The recompiler switches of recompiler_toggles.h (GOW3_LDS_SMALL/MULTI/READLANE, GOW3_WQM,
+// GOW3_LANE_DIVERGENCE, GOW3_RFL_ALL; ps4_core) also change the SPIR-V: their bits go above the
+// base and the lighting salt, which stay below 64.
 u32 CurrentShaderBinaryVersion() {
     return LightingTest::ShaderBinaryVersion(
-        Serialization::ShaderBinaryVersion,
-        LightingTest::ShaderBinarySalt(LightingTest::Current().dref,
-                                       AmdPathsOff::Current().shaderext));
+               Serialization::ShaderBinaryVersion,
+               LightingTest::ShaderBinarySalt(LightingTest::Current().dref,
+                                              AmdPathsOff::Current().shaderext)) +
+           64u * Shader::Toggles::ShaderBinarySalt();
 }
 } // namespace
 
@@ -275,6 +280,10 @@ vk::ResultValue<vk::UniquePipeline> CreateCachedGraphicsPipeline(
     const auto create = [&](vk::PipelineCache used_cache, const auto& used_info, bool restored) {
         const auto started = std::chrono::steady_clock::now();
         auto result = device.createGraphicsPipelineUnique(used_cache, used_info);
+        for (u32 attempt = 1;
+             RetryPipelineCreation(result.result, attempt, "graphics", "(cached)"); ++attempt) {
+            result = device.createGraphicsPipelineUnique(used_cache, used_info);
+        }
         const auto ns = u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                 std::chrono::steady_clock::now() - started)
                                 .count());

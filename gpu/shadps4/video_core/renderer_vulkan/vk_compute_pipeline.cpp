@@ -107,11 +107,16 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         .stage = shader_ci,
         .layout = *pipeline_layout,
     };
-    auto [pipeline_result, pipe] =
+    auto created =
         instance.GetDevice().createComputePipelineUnique(pipeline_cache, compute_pipeline_ci);
-    ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create compute pipeline: {}",
-               vk::to_string(pipeline_result));
-    pipeline = std::move(pipe);
+    for (u32 attempt = 1; RetryPipelineCreation(created.result, attempt, "compute", debug_str);
+         ++attempt) {
+        created =
+            instance.GetDevice().createComputePipelineUnique(pipeline_cache, compute_pipeline_ci);
+    }
+    ASSERT_MSG(created.result == vk::Result::eSuccess, "Failed to create compute pipeline: {}",
+               vk::to_string(created.result));
+    pipeline = std::move(created.value);
     extern std::atomic<u64> g_gow3_driver_pipelines_created;
     g_gow3_driver_pipelines_created.fetch_add(1, std::memory_order_relaxed);
     SetObjectName(device, *pipeline, "Compute Pipeline {}", debug_str);

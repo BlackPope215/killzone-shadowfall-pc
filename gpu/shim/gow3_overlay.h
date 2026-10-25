@@ -51,6 +51,8 @@ bool CapturesInput();
 void OpenQuickMenu();
 /// Loader (src/probe.c FOV hook): the float the FOV setting writes; set right away.
 void SetFovCell(float* cell);
+/// Loader (src/probe.c LOD distance hook): the float the LOD distance setting writes.
+void SetLodCell(float* cell);
 /// Loader (src/probe.c camera shake hook): the int the camera shake setting writes.
 void SetShakeCell(int* cell);
 /// Loader (src/probe.c scene resolution): the scene size the quality mode setting writes live.

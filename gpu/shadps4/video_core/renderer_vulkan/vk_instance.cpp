@@ -7,6 +7,7 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
+#include "common/backports.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/types.h"
@@ -334,7 +335,12 @@ bool Instance::CreateDevice() {
         feature_chain.get<vk::PhysicalDeviceMaintenance5FeaturesKHR>().maintenance5 &&
         feature_chain.get<vk::PhysicalDevicePipelineBinaryFeaturesKHR>().pipelineBinaries &&
         add_extension(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME);
-    maintenance_8 = add_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
+    // gow3: GOW3_NO_MAINTENANCE8=1 behaves like a driver without it (older AMD/Intel drivers:
+    // depth <-> colour copies go through a buffer), to test that path on any GPU.
+    {
+        const char* env = std::getenv("GOW3_NO_MAINTENANCE8");
+        maintenance_8 = !(env && env[0] == '1') && add_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
+    }
     attachment_feedback_loop = add_extension(VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME);
     if (attachment_feedback_loop) {
         attachment_feedback_loop =
@@ -422,7 +428,59 @@ bool Instance::CreateDevice() {
                  image_2d_view_of_3d_features.sampler2DViewOf3D);
     }
     image_view_min_lod = add_extension(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
+    // gow3: BP06 (SotC 8d84cf7, via ps4_core): enabled only when the extension is listed and its
+    // feature reports true.
+    maximal_reconvergence = false;
+    if (Common::Backports::On(Common::Backports::Id::MaximalReconvergence) &&
+        std::find(available_extensions.begin(), available_extensions.end(),
+                  std::string{VK_KHR_SHADER_MAXIMAL_RECONVERGENCE_EXTENSION_NAME}) !=
+            available_extensions.end()) {
+        const auto reconvergence_features =
+            physical_device
+                .getFeatures2<vk::PhysicalDeviceFeatures2,
+                              vk::PhysicalDeviceShaderMaximalReconvergenceFeaturesKHR>()
+                .get<vk::PhysicalDeviceShaderMaximalReconvergenceFeaturesKHR>();
+        if (reconvergence_features.shaderMaximalReconvergence) {
+            maximal_reconvergence =
+                add_extension(VK_KHR_SHADER_MAXIMAL_RECONVERGENCE_EXTENSION_NAME);
+        }
+    }
+    std::printf("GPU: maximal reconvergence %s\n", maximal_reconvergence ? "on" : "off");
     supports_memory_budget = add_extension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+    // gow3 (ps4_core, from shadPS4-Infamous-FixBuild e35e04dc): lets the driver move device
+    // memory out to system memory instead of failing an allocation when the card is full
+    // (crashes on 4 GB cards). On an 8 GB RTX 2060 SUPER it let usage pass the budget and heavy
+    // scenes lost ~3 FPS (2026-10-25), so by default only cards with at most 6 GB of device
+    // memory use it. GOW3_PAGEABLE_MEMORY=1 or 0 forces it on or off.
+    const char* pageable_env = std::getenv("GOW3_PAGEABLE_MEMORY");
+    u64 device_local_bytes = 0;
+    {
+        const auto memory = physical_device.getMemoryProperties();
+        for (u32 i = 0; i < memory.memoryHeapCount; ++i) {
+            if (memory.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
+                device_local_bytes = std::max<u64>(device_local_bytes, memory.memoryHeaps[i].size);
+            }
+        }
+    }
+    const bool pageable_wanted = pageable_env && *pageable_env
+                                     ? pageable_env[0] != '0'
+                                     : device_local_bytes <= (6ull << 30) + (512ull << 20);
+    const bool memory_priority =
+        pageable_wanted && add_extension(VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME);
+    const bool pageable_extension =
+        memory_priority && add_extension(VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME);
+    if (pageable_extension) {
+        const auto pageable_chain = physical_device.getFeatures2<
+            vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceMemoryPriorityFeaturesEXT,
+            vk::PhysicalDevicePageableDeviceLocalMemoryFeaturesEXT>();
+        pageable_device_local_memory =
+            pageable_chain.get<vk::PhysicalDeviceMemoryPriorityFeaturesEXT>().memoryPriority &&
+            pageable_chain.get<vk::PhysicalDevicePageableDeviceLocalMemoryFeaturesEXT>()
+                .pageableDeviceLocalMemory;
+    }
+    std::printf("GPU: pageable device memory %s (%llu MiB of device memory)\n",
+                pageable_device_local_memory ? "on" : "off",
+                static_cast<unsigned long long>(device_local_bytes >> 20));
     // gow3: FSR 4 v07 INT8 (vk_temporal_upscaler): quad derivatives in compute shaders.
     compute_shader_derivatives = add_extension(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
     // gow3: FSR 4.1.1 passes (dot2 of halves accumulated in float, as vkd3d-proton translates them).
@@ -657,8 +715,17 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceImageViewMinLodFeaturesEXT{
             .minLod = true,
         },
+        vk::PhysicalDeviceShaderMaximalReconvergenceFeaturesKHR{
+            .shaderMaximalReconvergence = true,
+        },
         vk::PhysicalDeviceShaderClockFeaturesKHR{
             .shaderSubgroupClock = shader_clock_features.shaderSubgroupClock,
+        },
+        vk::PhysicalDeviceMemoryPriorityFeaturesEXT{
+            .memoryPriority = true,
+        },
+        vk::PhysicalDevicePageableDeviceLocalMemoryFeaturesEXT{
+            .pageableDeviceLocalMemory = true,
         },
         vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR{
             .computeDerivativeGroupQuads =
@@ -728,6 +795,13 @@ bool Instance::CreateDevice() {
     }
     if (!shader_clock) {
         device_chain.unlink<vk::PhysicalDeviceShaderClockFeaturesKHR>();
+    }
+    if (!maximal_reconvergence) {
+        device_chain.unlink<vk::PhysicalDeviceShaderMaximalReconvergenceFeaturesKHR>();
+    }
+    if (!pageable_device_local_memory) {
+        device_chain.unlink<vk::PhysicalDeviceMemoryPriorityFeaturesEXT>();
+        device_chain.unlink<vk::PhysicalDevicePageableDeviceLocalMemoryFeaturesEXT>();
     }
     if (!compute_shader_derivatives) {
         device_chain.unlink<vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR>();

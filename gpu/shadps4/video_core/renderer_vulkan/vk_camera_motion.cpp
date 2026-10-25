@@ -257,9 +257,9 @@ void CameraMotion::OnKillzoneConstants(const float* data) {
     }
     // Signature: affine view matrices, a perspective projection (w = -z), the render size at 114,
     // its NDC scale (2/w, -2/h: the viewport flips) at 120 and its reciprocal at 124.
-    const auto near = [](float value, float expected) { return std::abs(value - expected) < 1e-4f; };
-    if (!near(data[15], 1.0f) || !near(data[47], 1.0f) || !near(data[27], -1.0f) ||
-        !near(data[31], 0.0f) || data[114] < 64.0f || data[115] < 64.0f ||
+    const auto close_to = [](float value, float expected) { return std::abs(value - expected) < 1e-4f; };
+    if (!close_to(data[15], 1.0f) || !close_to(data[47], 1.0f) || !close_to(data[27], -1.0f) ||
+        !close_to(data[31], 0.0f) || data[114] < 64.0f || data[115] < 64.0f ||
         std::abs(data[124] * data[114] - 1.0f) > 1e-3f ||
         std::abs(data[125] * data[115] - 1.0f) > 1e-3f ||
         std::abs(data[121] * data[115] + 2.0f) > 1e-3f || data[16] <= 0.0f || data[21] <= 0.0f) {

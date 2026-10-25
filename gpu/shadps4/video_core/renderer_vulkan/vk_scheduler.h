@@ -25,6 +25,7 @@
 #include "common/unique_function.h"
 #include "video_core/amdgpu/regs_color.h"
 #include "video_core/amdgpu/regs_primitive.h"
+#include "video_core/renderer_vulkan/vk_draw_pipe.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
@@ -738,11 +739,21 @@ public:
         return dynamic_state;
     }
 
+    /// gow3 (ps4_core): while draw packets are in flight the draw recording thread (stage B)
+    /// owns the deferred recording state (record_chunk, full_chunks, is_rendering). A call from
+    /// any other thread first runs `hook(context, caller)`: the rasterizer drains the pipe on
+    /// stage A and logs the caller, so two threads never use record_chunk at once.
+    void SetOwnerHook(void (*hook)(void*, void*), void* context) {
+        owner_hook = hook;
+        owner_context = context;
+    }
+
     /// Returns the current command buffer for recording on the calling thread. With threaded
     /// recording this first waits until all commands passed to Record() are recorded, then
     /// records directly (Record() included, so callers may mix both) until the next
     /// KickRecording() or submission.
     [[gnu::noinline]] vk::CommandBuffer CommandBuffer() {
+        CheckOwner(__builtin_return_address(0));
         if (recording_threaded && !direct_mode) {
             SyncRecording();
             direct_mode = true;
@@ -759,6 +770,7 @@ public:
     /// everything it uses (capture by value): it may run later on the recording thread.
     template <typename Func>
     void Record(Func&& func) {
+        CheckOwner(__builtin_return_address(0));
         if (!recording_threaded || direct_mode) {
             func(current_cmdbuf);
             return;
@@ -787,6 +799,7 @@ public:
     /// Makes room for `bytes` of RecordData() plus the command that uses them in the current
     /// chunk: data and command must share a chunk, which is recycled once executed.
     void ReserveRecordData(size_t bytes) {
+        CheckOwner(__builtin_return_address(0));
         if (!IsRecordingDeferred()) {
             return;
         }
@@ -919,6 +932,15 @@ public:
 
     static std::mutex submit_mutex;
 
+    /// gow3 (ps4_core): the graphics queue lock for a host call that synchronizes the device or
+    /// its queues outside a submission or a present (vkDeviceWaitIdle, vkDestroySwapchainKHR in
+    /// the swapchain paths): Vulkan needs host access to every queue of the device externally
+    /// synchronized, and other threads submit while the presenter rebuilds the swapchain. The
+    /// caller must hold no scheduler lock (and must not take one while holding this).
+    [[nodiscard]] static std::unique_lock<std::mutex> LockQueue() {
+        return std::unique_lock<std::mutex>{submit_mutex};
+    }
+
 private:
     void AllocateWorkerCommandBuffers();
 
@@ -971,6 +993,13 @@ private:
     u64 host_copies_issued = 0;
     std::atomic<u64> host_copies_done{0};
     std::atomic<u64> deferred_signals_issued{0}; ///< by the thread recording (A or B)
+    void (*owner_hook)(void*, void*) = nullptr; ///< gow3: SetOwnerHook
+    void* owner_context = nullptr;
+    [[gnu::always_inline]] void CheckOwner(void* caller) {
+        if (owner_hook && !DrawPipe::OnStageB()) [[unlikely]] {
+            owner_hook(owner_context, caller);
+        }
+    }
     std::shared_ptr<std::atomic<u64>> deferred_signals_done =
         std::make_shared<std::atomic<u64>>(0);
     // gow3: whether recorder_thread runs, read on every Record(). std::jthread::joinable()

@@ -9,6 +9,7 @@
 
 #include "common/assert.h"
 #include "common/func_traits.h"
+#include "common/backports.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
@@ -396,6 +397,15 @@ void DefineEntryPoint(const Info& info, EmitContext& ctx, Id main) {
         execution_model = spv::ExecutionModel::GLCompute;
         ctx.AddExecutionMode(main, spv::ExecutionMode::LocalSize, workgroup_size[0],
                              workgroup_size[1], workgroup_size[2]);
+        // gow3: BP06 (SotC 8d84cf7, via ps4_core). GCN code reduces values across the lanes of
+        // a wave (DPP shuffles, v_readlane) after loops whose trip count differs per lane and
+        // expects every lane to take part again once the loop is over; Vulkan only guarantees
+        // that with maximal reconvergence (set when the device exposes it).
+        if (ctx.profile.supports_maximal_reconvergence) {
+            ctx.AddExtension("SPV_KHR_maximal_reconvergence");
+            ctx.AddExecutionMode(main, spv::ExecutionMode::MaximallyReconvergesKHR);
+            Common::Backports::Hit(Common::Backports::Id::MaximalReconvergence);
+        }
         break;
     }
     case SwStage::Vertex:

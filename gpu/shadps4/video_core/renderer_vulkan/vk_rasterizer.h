@@ -270,8 +270,8 @@ private:
                       Shader::Backend::Bindings& binding, u32& write_index, bool& barrier,
                       bool on_helper = false);
     bool BindResources(const Pipeline* pipeline);
-    void BindSamplers(const Shader::Info& stage, const PreparedStage* prepared,
-                      Shader::Backend::Bindings& binding, u32& write_index);
+    /// gow3 (ps4_core): the scheduler's owner hook (Scheduler::SetOwnerHook).
+    static void SchedulerOwnerHook(void* rasterizer, void* caller);
     /// gow3: a stage's resolved textures remembered by its prepared T# hashes
     /// (TextureSetMemo): a hit only redoes the per-draw effects (binding flags, transitions).
     struct TextureSetEntry {
@@ -290,8 +290,25 @@ private:
         static constexpr u32 MaxImages = 16; ///< larger sets are not memoized
         std::array<u64, MaxImages> hashes{};
         std::array<TextureSetEntry, MaxImages> entries{};
+        /// gow3 (ps4_core SamplerSetMemo): the stage's samplers, resolved once per set.
+        /// `sampler_key` is SamplerSetKey's hash of GetSampler's inputs; `sampler_generation` is
+        /// the sampler cache's generation then and `sampler_lru_ids` their LRU entries, so a hit
+        /// can mark them used (TouchSamplers) without the collector evicting samplers in use.
+        std::array<vk::Sampler, Shader::NUM_SAMPLERS> samplers{};
+        std::array<u64, Shader::NUM_SAMPLERS> sampler_lru_ids{};
+        u64 sampler_key = 0;
+        u64 sampler_generation = ~0ull;
+        u32 sampler_count = 0;
     };
     std::array<TextureSet, 32768> texture_sets{};
+    /// `set_slot`: the stage's texture set (hit, or a miss that is being remembered), or null.
+    /// SamplerSetMemo resolves its samplers once and a hit reuses them.
+    void BindSamplers(const Shader::Info& stage, const PreparedStage* prepared,
+                      Shader::Backend::Bindings& binding, u32& write_index,
+                      TextureSet* set_slot);
+    /// gow3 (SamplerSetMemo): hash of everything GetSampler depends on for this stage: its S#s,
+    /// the border color base, the per-sampler depth flags and this draw's sampler LOD bias.
+    u64 SamplerSetKey(const Shader::Info& stage, const PreparedStage* prepared) const;
     u64 texture_set_hits = 0, texture_set_misses = 0;
     std::array<u64, 4> texture_set_why{}; ///< misses: other key, generation, image check, new
     /// Returns true when the stage's images were bound from the memo.
@@ -388,6 +405,16 @@ private:
 
     u32 set_write_index{};
     Pipeline::DescriptorWrites set_writes;
+    /// gow3 (ps4_core SetWritePool): room for `count` descriptor writes. The vector keeps its
+    /// elements between draws, so growing it (which value-initialises them) happens once per
+    /// high-water mark instead of per draw; with GOW3_SET_WRITE_POOL=0 BindResources clears it.
+    void EnsureSetWrites(u32 count) {
+        if (set_writes.size() < count) {
+            set_writes.resize(count);
+        }
+    }
+    /// gow3: whether the per-draw descriptor writes keep their storage (SetWritePool).
+    static bool SetWritePool();
     Shader::PushData push_data;
 
     // gow3: bindings point at their description instead of copying it (a hot spot): into

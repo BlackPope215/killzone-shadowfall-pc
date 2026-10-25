@@ -56,6 +56,8 @@ enum {
     GOW3_PROMPT_LOOKUPS = 4, GOW3_PROMPT_TEXT_IMAGE = 0x51f4c0, GOW3_PROMPT_TEXTURE_WIDGET = 0x42d370,
     GOW3_PROMPT_SHEET_MAX = 4096, GOW3_PROMPT_MENU_IMAGES = 64, GOW3_PROMPT_SHEETS = 4,
     GOW3_PROMPT_MENUS = 4,
+    /* Icon sets, each with its own copies: 0 keys and mouse, 1 Xbox buttons. */
+    GOW3_PROMPT_SET_KEYBOARD = 0, GOW3_PROMPT_SET_XBOX = 1, GOW3_PROMPT_SETS = 2,
 };
 
 typedef struct { uint32_t address; unsigned length; unsigned char bytes[27]; } Gow3PromptCode;
@@ -161,7 +163,8 @@ static inline unsigned gow3_prompt_build_text_stub(unsigned char *out, uintptr_t
 
 /* Reads guest memory without faulting on a bad pointer. */
 typedef int (*Gow3PromptRead)(uintptr_t address, void *out, size_t size);
-/* Key label (kind 1) or mouse button (2 left, 3 right) bound to a prompt icon; 0: keep PS4. */
+/* Key label (kind 1), mouse button (2 left, 3 right) or Xbox button label (4) bound to a prompt
+ * icon; 0: keep PS4. */
 typedef int (*Gow3PromptBinding)(unsigned icon, char *label, size_t size);
 /* Creates a width x height RGBA game texture from the pixels; 0 on failure. */
 typedef uint64_t (*Gow3PromptCreate)(const uint32_t *pixels, unsigned width, unsigned height);
@@ -306,6 +309,18 @@ static inline int gow3_prompt_swap(Gow3PromptAtlas *pc, uintptr_t command, uint6
         return 1;
     }
     return 0;
+}
+
+/* Points a command drawing from one of pc's holders back at the game's holder (another icon set
+ * is wanted now). */
+static inline void gow3_prompt_release(const Gow3PromptAtlas *pc, uintptr_t command) {
+    if (!command) return;
+    const uint64_t holder = *(const uint64_t *)(command + 0x58);
+    for (unsigned k = 0; k < GOW3_PROMPT_HOLDERS && holder; ++k)
+        if (holder == (uintptr_t)pc->pc_holders[k] && pc->original_holders[k]) {
+            *(uint64_t *)(command + 0x58) = pc->original_holders[k];
+            return;
+        }
 }
 
 /* A rich-text image cut from the atlas (<function-icon>; render: its resource's render texture,

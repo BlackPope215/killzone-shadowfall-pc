@@ -142,6 +142,11 @@ public:
     }
 
     /// Returns true if VK_KHR_maintenance8 is supported
+    /// gow3: BP06, VK_KHR_shader_maximal_reconvergence enabled.
+    bool IsMaximalReconvergenceSupported() const {
+        return maximal_reconvergence;
+    }
+
     bool IsMaintenance8Supported() const {
         return maintenance_8;
     }
@@ -586,6 +591,7 @@ private:
     bool pipeline_binaries{};
     vk::PipelineBinaryKeyKHR pipeline_binary_global_key{};
     bool maintenance_8{};
+    bool maximal_reconvergence{};
     bool attachment_feedback_loop{};
     bool image_2d_view_of_3d{};
     bool image_view_min_lod{};
@@ -595,6 +601,7 @@ private:
     bool compute_shader_derivatives{};
     bool mixed_float_dot_product{}; // gow3: VK_VALVE_shader_mixed_float_dot_product (FSR 4.1.1)
     bool supports_memory_budget{};
+    bool pageable_device_local_memory{}; ///< gow3: VK_EXT_pageable_device_local_memory on
     bool supports_block_texel_view{};
     u64 total_memory_budget{};
     std::vector<size_t> valid_heaps;

@@ -23,6 +23,7 @@ public:
     ~Swapchain();
 
     /// Creates (or recreates) the swapchain with a given size.
+    /// gow3: holds the graphics queue lock across the rebuild.
     void Create(u32 width, u32 height);
 
     /// Recreates the swapchain with a given size and current surface.
@@ -39,11 +40,11 @@ public:
     }
 
     vk::Image Image() const {
-        return images[image_index];
+        return image_index < images.size() ? images[image_index] : vk::Image{};
     }
 
     vk::ImageView ImageView() const {
-        return images_view[image_index];
+        return image_index < images_view.size() ? images_view[image_index] : vk::ImageView{};
     }
 
     vk::SurfaceFormatKHR GetSurfaceFormat() const {
@@ -75,11 +76,11 @@ public:
     }
 
     [[nodiscard]] vk::Semaphore GetImageAcquiredSemaphore() const {
-        return image_acquired[frame_index];
+        return frame_index < image_acquired.size() ? image_acquired[frame_index] : vk::Semaphore{};
     }
 
     [[nodiscard]] vk::Semaphore GetPresentReadySemaphore() const {
-        return present_ready[image_index];
+        return image_index < present_ready.size() ? present_ready[image_index] : vk::Semaphore{};
     }
 
     bool HasHDR() const {
@@ -104,9 +105,14 @@ private:
     void FindPresentMode();
 
     /// Sets the surface properties according to device capabilities
-    void SetSurfaceProperties();
+    bool SetSurfaceProperties();
 
-    /// Destroys current swapchain resources
+    /// gow3 (SpartanPort): recreates the Vulkan surface from the window (surface lost).
+    void RecreateSurface();
+
+    /// Destroys current swapchain resources.
+    /// gow3: the caller holds the graphics queue lock: the device is waited on here and the
+    /// swapchain resources are destroyed while other threads may submit.
     void Destroy();
 
     /// Performs creation of image views and framebuffers from the swapchain images
@@ -131,6 +137,7 @@ private:
     std::vector<vk::ImageView> images_view;
     std::vector<vk::Semaphore> image_acquired;
     std::vector<vk::Semaphore> present_ready;
+    vk::Fence acquire_fence{}; ///< gow3: GOW3_PRESENT_ACQUIRE_FENCE, see AcquireNextImage
     u32 width = 0;
     u32 height = 0;
     u32 image_count = 0;

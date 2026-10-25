@@ -472,27 +472,60 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
 void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
                                   const VideoCore::Buffer* buffer, u64 offset) {
     TraceOp("copy (buffer) into", dst);
-    const u32 num_mips = std::min(src->info.resources.levels, dst->info.resources.levels);
-    const u32 num_layers = std::min(src->info.resources.layers, dst->info.resources.layers);
-    ASSERT(src->info.resources.layers == dst->info.resources.layers && num_mips == 1);
+    // gow3: the mips and layers both images have. Upstream asserted one mip and equal layers,
+    // which closed Killzone on drivers without VK_KHR_maintenance8 (depth <-> colour copies go
+    // through this buffer there) when a skipped cinematic or a loaded save aliased a depth
+    // target with a mipmapped or layered colour image (issues #52, #62: code 23).
+    const u32 num_mips = std::max(1u, std::min(src->info.resources.levels, dst->info.resources.levels));
+    const u32 num_layers =
+        std::max(1u, std::min(src->info.resources.layers, dst->info.resources.layers));
+    if (src->info.resources.layers != dst->info.resources.layers ||
+        src->info.resources.levels != dst->info.resources.levels) {
+        static std::atomic<u32> reported{0};
+        if (reported.fetch_add(1, std::memory_order_relaxed) < 8) {
+            LOG_WARNING(Render_Vulkan,
+                        "gow3: depth/colour copy through a buffer with {}x{} and {}x{} mips x "
+                        "layers: copying the {} common mips and {} layers",
+                        src->info.resources.levels, src->info.resources.layers,
+                        dst->info.resources.levels, dst->info.resources.layers, num_mips,
+                        num_layers);
+        }
+    }
 
     SetBackingSamples(dst, dst->info.num_samples, false);
     SetBackingSamples(src, src->info.num_samples);
 
-    vk::BufferImageCopy buffer_copy = {
-        .bufferOffset = offset,
-        .bufferRowLength = 0,
-        .bufferImageHeight = 0,
-        .imageSubresource{
-            .aspectMask = src->aspect_mask & ~vk::ImageAspectFlagBits::eStencil,
-            .mipLevel = 0u,
-            .baseArrayLayer = 0,
-            .layerCount = num_layers,
-        },
-        .imageOffset = {0, 0, 0},
-        .imageExtent = {src->info.size.width, src->info.size.height, src->info.size.depth},
-    };
-    const auto copy_size = BufferImageCopySize(buffer_copy, src->info.pixel_format);
+    // One region per mip, laid out one after another in the buffer (128 MiB: mips that would
+    // not fit are left out).
+    static constexpr u64 CopyBufferSize = 128_MB;
+    boost::container::small_vector<vk::BufferImageCopy, 16> download_copies;
+    u64 copy_size = 0;
+    for (u32 mip = 0; mip < num_mips; ++mip) {
+        const vk::BufferImageCopy region = {
+            .bufferOffset = offset + copy_size,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource{
+                .aspectMask = src->aspect_mask & ~vk::ImageAspectFlagBits::eStencil,
+                .mipLevel = mip,
+                .baseArrayLayer = 0,
+                .layerCount = num_layers,
+            },
+            .imageOffset = {0, 0, 0},
+            .imageExtent = {std::max(src->info.size.width >> mip, 1u),
+                            std::max(src->info.size.height >> mip, 1u),
+                            std::max(src->info.size.depth >> mip, 1u)},
+        };
+        const u64 size = BufferImageCopySize(region, src->info.pixel_format);
+        if (copy_size + size > CopyBufferSize) {
+            break;
+        }
+        download_copies.push_back(region);
+        copy_size = (copy_size + size + 255) & ~u64{255};
+    }
+    if (download_copies.empty()) {
+        return;
+    }
 
     scheduler.EndRendering();
 
@@ -506,13 +539,15 @@ void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
         FlushBarriers();
     }
 
-    const auto download_copy = buffer_copy;
-    buffer_copy.imageSubresource.aspectMask = dst->aspect_mask & ~vk::ImageAspectFlagBits::eStencil;
+    auto upload_copies = download_copies;
+    for (auto& region : upload_copies) {
+        region.imageSubresource.aspectMask = dst->aspect_mask & ~vk::ImageAspectFlagBits::eStencil;
+    }
     scheduler.Record([src_image = src->GetImage(), dst_image = dst->GetImage(),
-                      handle = buffer->Handle(), download_copy,
-                      upload_copy = buffer_copy](vk::CommandBuffer cmdbuf) {
+                      handle = buffer->Handle(), download_copies,
+                      upload_copies](vk::CommandBuffer cmdbuf) {
         cmdbuf.copyImageToBuffer(src_image, vk::ImageLayout::eTransferSrcOptimal, handle,
-                                 download_copy);
+                                 download_copies);
         const vk::MemoryBarrier2 post_copy_barrier = {
             .srcStageMask = vk::PipelineStageFlagBits2::eCopy,
             .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
@@ -525,7 +560,7 @@ void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
             .pMemoryBarriers = &post_copy_barrier,
         });
         cmdbuf.copyBufferToImage(handle, dst_image, vk::ImageLayout::eTransferDstOptimal,
-                                 upload_copy);
+                                 upload_copies);
     });
 
     dst->flags |= (src->flags & VideoCore::ImageFlagBits::GpuModified);

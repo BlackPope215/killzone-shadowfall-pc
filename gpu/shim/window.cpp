@@ -259,6 +259,23 @@ bool WindowSDL::PollEvents() {
             height = h;
             break;
         }
+        case SDL_EVENT_WINDOW_MINIMIZED:
+        case SDL_EVENT_WINDOW_HIDDEN:
+        case SDL_EVENT_WINDOW_OCCLUDED:
+            is_minimized.store(true, std::memory_order_release);
+            break;
+        case SDL_EVENT_WINDOW_RESTORED:
+        case SDL_EVENT_WINDOW_SHOWN:
+        case SDL_EVENT_WINDOW_EXPOSED: {
+            is_minimized.store(false, std::memory_order_release);
+            int w = 0, h = 0;
+            SDL_GetWindowSizeInPixels(window, &w, &h);
+            if (w > 0 && h > 0) {
+                width = w;
+                height = h;
+            }
+            break;
+        }
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
             is_open = false;
@@ -267,7 +284,29 @@ bool WindowSDL::PollEvents() {
             break;
         }
     }
+    // gow3 (SpartanPort d6d1aea): the window flags too, for state changes without an event.
+    if (window) {
+        const SDL_WindowFlags flags = SDL_GetWindowFlags(window);
+        const bool min =
+            (flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN | SDL_WINDOW_OCCLUDED)) != 0;
+        const bool was_min = is_minimized.exchange(min, std::memory_order_acq_rel);
+        if (was_min && !min) {
+            int w = 0, h = 0;
+            SDL_GetWindowSizeInPixels(window, &w, &h);
+            if (w > 0 && h > 0) {
+                width = w;
+                height = h;
+            }
+        }
+    }
     return is_open;
+}
+
+bool WindowSDL::IsMinimized() const {
+    if (is_minimized.load(std::memory_order_acquire)) {
+        return true;
+    }
+    return width.load(std::memory_order_relaxed) <= 0 || height.load(std::memory_order_relaxed) <= 0;
 }
 
 } // namespace Frontend

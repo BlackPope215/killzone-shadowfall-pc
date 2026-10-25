@@ -122,6 +122,21 @@ static vk::Rect2D FitImage(s32 frame_width, s32 frame_height, s32 swapchain_widt
     return vk::Rect2D{{offset_x, offset_y}, {dst_width, dst_height}};
 }
 
+/// gow3 (ps4_core): GOW3_PRESENT_SKIP_CLEAR=0 clears the whole swapchain image before the blit
+/// again, and filters the blit linearly, as before. Default on: the clear only runs when the
+/// blit leaves part of the swapchain image untouched (letterbox bars).
+static bool SkipPresentClear() {
+    static const bool skip = [] {
+        const char* env = std::getenv("GOW3_PRESENT_SKIP_CLEAR");
+        const bool on = !(env && env[0] == '0');
+        if (!on) {
+            std::printf("GPU: present clears the whole swapchain image (GOW3_PRESENT_SKIP_CLEAR=0)\n");
+        }
+        return on;
+    }();
+    return skip;
+}
+
 [[nodiscard]] vk::ImageBlit MakeImageBlitFit(s32 frame_width, s32 frame_height, s32 swapchain_width,
                                              s32 swapchain_height) {
     const auto& dst_rect = FitImage(frame_width, frame_height, swapchain_width, swapchain_height);
@@ -998,7 +1013,7 @@ Frame* Presenter::PrepareBlankFrame(bool present_thread) {
 }
 
 void Presenter::PresentLoadingFrame() {
-    if (window.GetWidth() == 0 || window.GetHeight() == 0) {
+    if (window.IsMinimized() || window.GetWidth() <= 0 || window.GetHeight() <= 0) {
         return;
     }
     swapchain.UpdateVsync();
@@ -1006,7 +1021,12 @@ void Presenter::PresentLoadingFrame() {
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
     }
     if (!swapchain.AcquireNextImage()) {
-        return;
+        if (!window.IsMinimized() && window.GetWidth() > 0 && window.GetHeight() > 0) {
+            swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        }
+        if (!swapchain.AcquireNextImage()) {
+            return;
+        }
     }
     const vk::Image image = swapchain.Image();
     const vk::Extent2D extent = swapchain.GetExtent();
@@ -1045,9 +1065,14 @@ void Presenter::PresentLoadingFrame() {
     info.AddWait(swapchain.GetImageAcquiredSemaphore());
     info.AddSignal(swapchain.GetPresentReadySemaphore());
     present_scheduler.Flush(info);
+    bool recreate = false;
     {
         std::scoped_lock submit_lock{Scheduler::submit_mutex};
-        swapchain.Present();
+        recreate = !swapchain.Present() && !window.IsMinimized() && window.GetWidth() > 0 &&
+                   window.GetHeight() > 0;
+    }
+    if (recreate) {
+        swapchain.Recreate(window.GetWidth(), window.GetHeight());
     }
     // A few frames a second during start-up: waiting keeps semaphores and the swapchain simple.
     present_scheduler.Finish();
@@ -1064,9 +1089,9 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         }
     };
 
-    // gow3: a minimized window has no pixels on Windows (0x0); keep the swapchain and skip
-    // presenting until the window is restored.
-    if (window.GetWidth() == 0 || window.GetHeight() == 0) {
+    // gow3: a minimized window has no pixels on Windows (0x0) or is hidden/occluded; keep the
+    // swapchain and skip presenting until the window is restored (SpartanPort d6d1aea).
+    if (window.IsMinimized() || window.GetWidth() <= 0 || window.GetHeight() <= 0) {
         free_frame();
         return;
     }
@@ -1140,7 +1165,9 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
 
 bool Presenter::PresentImage(Frame* frame, vk::Image image, bool last) {
     if (!swapchain.AcquireNextImage()) {
-        swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        if (!window.IsMinimized() && window.GetWidth() > 0 && window.GetHeight() > 0) {
+            swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        }
         if (!swapchain.AcquireNextImage()) {
             // User resizes the window too fast and GPU can't keep up. Skip this frame.
             LOG_WARNING(Render_Vulkan, "Skipping frame!");
@@ -1205,18 +1232,31 @@ bool Presenter::PresentImage(Frame* frame, vk::Image image, bool last) {
         cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
                                vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlagBits::eByRegion,
                                {}, {}, pre_barriers);
-        const vk::ClearColorValue black{std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}};
-        cmdbuf.clearColorImage(swapchain_image, vk::ImageLayout::eTransferDstOptimal, black, color_range);
-        const vk::MemoryBarrier clear_done{
-            .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
-            .dstAccessMask = vk::AccessFlagBits::eTransferWrite,
-        };
-        cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer,
-                               vk::DependencyFlagBits::eByRegion, clear_done, {}, {});
+        // gow3 (ps4_core): the fit rect covers the whole swapchain image when the window and the
+        // game share the aspect (the common case): the black clear then writes only pixels the
+        // blit overwrites, so it and its barrier are skipped. A blit that lands texel for texel
+        // is exact with nearest filtering (and cheaper) instead of linear.
+        const vk::Rect2D fit = FitImage(frame->width, frame->height, extent.width, extent.height);
+        const bool full = fit.offset.x == 0 && fit.offset.y == 0 &&
+                          fit.extent.width == extent.width && fit.extent.height == extent.height;
+        const bool one_to_one = fit.extent.width == u32(frame->width) &&
+                                fit.extent.height == u32(frame->height);
+        if (!(full && SkipPresentClear())) {
+            const vk::ClearColorValue black{std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}};
+            cmdbuf.clearColorImage(swapchain_image, vk::ImageLayout::eTransferDstOptimal, black, color_range);
+            const vk::MemoryBarrier clear_done{
+                .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
+                .dstAccessMask = vk::AccessFlagBits::eTransferWrite,
+            };
+            cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer,
+                                   vk::DependencyFlagBits::eByRegion, clear_done, {}, {});
+        }
         cmdbuf.blitImage(image, vk::ImageLayout::eTransferSrcOptimal, swapchain_image,
                          vk::ImageLayout::eTransferDstOptimal,
-                         MakeImageBlitFit(frame->width, frame->height, extent.width, extent.height),
-                         vk::Filter::eLinear);
+                         MakeImageBlit(frame->width, frame->height, fit.extent.width,
+                                       fit.extent.height, fit.offset.x, fit.offset.y),
+                         one_to_one && SkipPresentClear() ? vk::Filter::eNearest
+                                                          : vk::Filter::eLinear);
         // F12 takes the game's own frame, not a generated one.
         if (last && VideoCore::ConsumeGameOnlyScreenshotRequests() != 0) {
             CaptureScreenshot(instance, scheduler, cmdbuf, *frame);
@@ -1285,11 +1325,16 @@ bool Presenter::PresentImage(Frame* frame, vk::Image image, bool last) {
     scheduler.Flush(info);
 
     // Present to swapchain.
+    bool recreate = false;
     {
         std::scoped_lock submit_lock{Scheduler::submit_mutex};
-        if (!swapchain.Present() && window.GetWidth() != 0 && window.GetHeight() != 0) {
-            swapchain.Recreate(window.GetWidth(), window.GetHeight());
-        }
+        recreate = !swapchain.Present() && !window.IsMinimized() && window.GetWidth() > 0 &&
+                   window.GetHeight() > 0;
+    }
+    if (recreate) {
+        // gow3 (ps4_core): out of date: rebuilt outside the present lock (Create takes the
+        // queue lock itself).
+        swapchain.Recreate(window.GetWidth(), window.GetHeight());
     }
     return true;
 }

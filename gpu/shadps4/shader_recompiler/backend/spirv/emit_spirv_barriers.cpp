@@ -41,4 +41,16 @@ void EmitDeviceMemoryBarrier(EmitContext& ctx) {
     MemoryBarrier(ctx, spv::Scope::Device);
 }
 
+// Synchronizes the invocations of one host subgroup (like __syncwarp) and orders their shared
+// memory accesses: what a GCN wave gets for free from executing in lockstep.
+// gow3 (ps4_core): from the SotC native port (AjncSystem/ShadowOfTheColossus-PC), LDS barriers
+// for multi-wave workgroups.
+void EmitSubgroupBarrier(EmitContext& ctx) {
+    const auto semantics{spv::MemorySemanticsMask::AcquireRelease |
+                         spv::MemorySemanticsMask::WorkgroupMemory};
+    ctx.OpControlBarrier(ctx.ConstU32(static_cast<u32>(spv::Scope::Subgroup)),
+                         ctx.ConstU32(static_cast<u32>(spv::Scope::Workgroup)),
+                         ctx.ConstU32(static_cast<u32>(semantics)));
+}
+
 } // namespace Shader::Backend::SPIRV

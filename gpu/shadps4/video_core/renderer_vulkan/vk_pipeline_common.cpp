@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <span>
+#include <thread>
+#include <chrono>
 
 #include <boost/container/small_vector.hpp>
 #include <boost/container/static_vector.hpp>
 
+#include "common/logging/log.h"
 #include "shader_recompiler/resource.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -29,8 +32,28 @@ Pipeline::Pipeline(const Instance& instance_, Scheduler& scheduler_, DescriptorH
 
 Pipeline::~Pipeline() = default;
 
+bool RetryPipelineCreation(vk::Result result, u32 attempt, std::string_view kind,
+                           std::string_view name) {
+    // With the driver's cache cold, as after a driver update, the compiler threads build
+    // hundreds of pipelines at once while the game loads, and the driver fails one of them now
+    // and then (unknown error, or out of memory on 4 GB cards), which ended the game. Building it
+    // again a little later can succeed.
+    constexpr u32 MaxAttempts = 5;
+    const bool may_recover = result == vk::Result::eErrorUnknown ||
+                             result == vk::Result::eErrorOutOfHostMemory ||
+                             result == vk::Result::eErrorOutOfDeviceMemory ||
+                             result == vk::Result::eErrorInitializationFailed;
+    if (!may_recover || attempt >= MaxAttempts) {
+        return false;
+    }
+    LOG_WARNING(Render_Vulkan, "gow3: creating {} pipeline {} failed with {} (attempt {}), trying "
+                "again", kind, name, vk::to_string(result), attempt);
+    std::this_thread::sleep_for(std::chrono::milliseconds{100} * attempt);
+    return true;
+}
 
-void Pipeline::BindResources(DescriptorWrites& set_writes,
+
+void Pipeline::BindResources(DescriptorWrites& set_writes, u32 count,
                              const Shader::PushData& push_data) const {
     const auto bind_point =
         IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
@@ -41,30 +64,31 @@ void Pipeline::BindResources(DescriptorWrites& set_writes,
     });
 
     // Bind descriptor set.
-    if (set_writes.empty()) {
+    if (count == 0) {
         return;
     }
+    const std::span<const vk::WriteDescriptorSet> writes{set_writes.data(), count};
 
     if (uses_push_descriptors) {
         if (!scheduler.IsRecordingDeferred()) {
             scheduler.Record([&](vk::CommandBuffer cmdbuf) {
-                cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, set_writes);
+                cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, writes);
             });
             return;
         }
         // Writes and the infos they point to are laid out in the recording chunk, with the
         // pointers already aimed at those copies: the command only carries a span.
-        size_t bytes = set_writes.size() * sizeof(vk::WriteDescriptorSet) + 64;
-        for (const auto& write : set_writes) {
+        size_t bytes = writes.size() * sizeof(vk::WriteDescriptorSet) + 64;
+        for (const auto& write : writes) {
             bytes += write.descriptorCount *
                          (sizeof(vk::DescriptorBufferInfo) + sizeof(vk::DescriptorImageInfo) +
                           sizeof(vk::BufferView)) +
                      32;
         }
         scheduler.ReserveRecordData(bytes);
-        const auto writes = scheduler.RecordData(std::span<const vk::WriteDescriptorSet>{set_writes});
-        auto* patched = const_cast<vk::WriteDescriptorSet*>(writes.data());
-        for (size_t i = 0; i < writes.size(); ++i) {
+        const auto recorded = scheduler.RecordData(writes);
+        auto* patched = const_cast<vk::WriteDescriptorSet*>(recorded.data());
+        for (size_t i = 0; i < recorded.size(); ++i) {
             auto& write = patched[i];
             if (write.pBufferInfo) {
                 write.pBufferInfo = scheduler.RecordData(std::span{write.pBufferInfo, write.descriptorCount}).data();
@@ -77,14 +101,17 @@ void Pipeline::BindResources(DescriptorWrites& set_writes,
                     scheduler.RecordData(std::span{write.pTexelBufferView, write.descriptorCount}).data();
             }
         }
-        scheduler.Record([bind_point, layout, writes](vk::CommandBuffer cmdbuf) {
-            cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, writes);
+        scheduler.Record([bind_point, layout, recorded](vk::CommandBuffer cmdbuf) {
+            cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, recorded);
         });
         return;
     }
 
     // Descriptor set updates are device calls: they stay on this thread.
+    // The pool may hold more writes than this draw's (SetWritePool): drop them before the call
+    // (no element is constructed, the vector only grows again in EnsureSetWrites).
     const auto desc_set = desc_heap.Commit(*desc_layout);
+    set_writes.resize(count);
     for (auto& set_write : set_writes) {
         set_write.dstSet = desc_set;
     }

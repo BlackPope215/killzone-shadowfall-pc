@@ -139,6 +139,14 @@ def link(game, out, module_names=DEFAULT_MODULES, dynamic_names=()):
     for filename in list(module_names) + list(dynamic_names):
         is_dynamic = filename in dynamic_names
         m = module(game / filename if is_dynamic else game / 'sce_module' / filename)
+        if is_dynamic:
+            # kzsf (#72): some PKG extractors leave system modules (dlcldr.prx) in the game root.
+            # Ones with TLS or initializers are not the game's own (all_programs.prx): skipped.
+            tls_header = next((p for p in m['ph'] if p['type'] == 7), None)
+            init_array = m['tags'].get(27, 0) or m['tags'].get(33, 0)
+            if (tls_header and tls_header['memsz']) or m['tags'].get(12, 0) or init_array:
+                print(f'{filename}: dynamic module with TLS or initializers, skipped', flush=True)
+                continue
         loads = [p for p in m['ph'] if p['type'] in (1, 0x61000010)]
         modsize = max(p['vaddr'] + p['memsz'] for p in loads)
         if base + modsize > 512 * 1024 * 1024:

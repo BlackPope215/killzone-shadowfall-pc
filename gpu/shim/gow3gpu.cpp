@@ -389,6 +389,10 @@ extern "C" void gow3gpu_fov_register(float* cell) {
     Gow3Overlay::SetFovCell(cell);
 }
 
+extern "C" void gow3gpu_lod_register(float* cell) {
+    Gow3Overlay::SetLodCell(cell);
+}
+
 extern "C" unsigned gow3gpu_post_effects_off(void) {
     const auto& s = Gow3Settings::Get();
     return (s.startup_motion_blur ? 0u : 1u) | (s.startup_depth_of_field ? 0u : 2u) |

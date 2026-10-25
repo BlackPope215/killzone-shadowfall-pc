@@ -232,9 +232,22 @@ public:
 
     /// Retrieves the sampler that matches the provided S# descriptor.
     /// extra_lod_bias: gow3, added to the S#'s bias (reduced scene rendering).
+    /// lru_id: gow3, receives the sampler's LRU entry for TouchSamplers (SamplerSetMemo).
     [[nodiscard]] vk::Sampler GetSampler(const AmdGpu::Sampler& sampler,
                                          AmdGpu::BorderColorBuffer border_color_base,
-                                         bool is_depth, float extra_lod_bias = 0.0f);
+                                         bool is_depth, float extra_lod_bias = 0.0f,
+                                         u64* lru_id = nullptr);
+
+    /// gow3 (ps4_core SamplerSetMemo): marks the samplers of a memoized set as used, under one
+    /// lock. False when a sampler was destroyed since `generation` (the ids may be gone or
+    /// reused), which makes the caller resolve the samplers again.
+    bool TouchSamplers(const u64* lru_ids, u32 count, u64 generation);
+
+    /// gow3: changes whenever the collector destroys a sampler, so a memo of resolved samplers
+    /// can drop the ones that would dangle.
+    [[nodiscard]] u64 SamplerGeneration() const noexcept {
+        return sampler_generation.load(std::memory_order_acquire);
+    }
 
     /// Retrieves the image with the specified id.
     Image* TryGetImage(ImageId id, u64 uid) {
@@ -582,6 +595,8 @@ private:
     std::array<FindImageCacheEntry, 1024> find_image_cache{};
     std::atomic<u64> registry_generation{0};
     std::mutex samplers_mutex;
+    /// gow3: bumped when the collector destroys a sampler (SamplerGeneration).
+    std::atomic<u64> sampler_generation{0};
     std::mutex download_images_mutex;
     struct MetaDataInfo {
         MetaType type;

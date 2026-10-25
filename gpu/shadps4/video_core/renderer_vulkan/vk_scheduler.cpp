@@ -218,6 +218,12 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
 }
 
 void Scheduler::EndRendering() {
+    // gow3 (ps4_core): is_rendering belongs to the draw recording thread (stage B) while draw
+    // packets are in flight: drain first (owner hook), or a stale "not rendering" lets the next
+    // command (a stage A copy) be recorded inside the render pass stage B opens meanwhile, which
+    // crashed the NVIDIA driver in the recorder thread in their games (and recorded an
+    // endRendering with none open in Killzone's chapter 2 cinematic, see RecordEndRendering).
+    CheckOwner(__builtin_return_address(0));
     if (!is_rendering) {
         return;
     }
@@ -328,6 +334,7 @@ void Scheduler::KickRecording(bool force) {
     if (!recording_threaded) {
         return;
     }
+    CheckOwner(__builtin_return_address(0));
     // Callers kick where nobody holds the raw command buffer: deferral resumes.
     direct_mode = false;
     // Batches of tens of KiB keep the queue handoff cheap relative to the work it carries.
