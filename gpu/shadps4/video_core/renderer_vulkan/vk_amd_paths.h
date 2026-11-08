@@ -81,4 +81,23 @@ inline Flags Current() {
     return flags;
 }
 
+/// gow3: GOW3_MANUAL_INTERP=1 interpolates the fragment inputs in the shader from the per-vertex
+/// values, with the I/J the guest code computed (V_INTERP_P1/P2), as on NVIDIA. Without it the
+/// AMD path guesses one qualifier (center/centroid/sample) per attribute from the VGPR holding
+/// I/J and lets the hardware interpolate, which is wrong when the guest edits I/J or uses two
+/// kinds for one attribute (stray colours along triangle edges). 0 forces the hardware path.
+/// -1: not set. Changes the SPIR-V (folded into the shader binary cache version).
+inline int ManualInterp() {
+    static const int value = [] {
+        const char* v = std::getenv("GOW3_MANUAL_INTERP");
+        if (!v || !*v) {
+            return -1;
+        }
+        const int on = v[0] == '1' ? 1 : 0;
+        std::printf("GPU: manual interpolation %s (GOW3_MANUAL_INTERP)\n", on ? "on" : "off");
+        return on;
+    }();
+    return value;
+}
+
 } // namespace Vulkan::AmdPathsOff
