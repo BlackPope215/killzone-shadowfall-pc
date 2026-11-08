@@ -870,8 +870,18 @@ void Translator::V_CVT_PKNORM_I16_F32(const GcnInst& inst) {
 }
 
 void Translator::V_CVT_PKRTZ_F16_F32(const GcnInst& inst) {
-    const IR::Value vec_f32 =
-        ir.CompositeConstruct(GetSrc<IR::F32>(inst.src[0]), GetSrc<IR::F32>(inst.src[1]));
+    // gow3: RTZ (round toward zero) never rounds a finite value up to infinity: anything past
+    // the largest half (65504) becomes 65504. packHalf2x16 rounds to nearest, so bright HDR
+    // values turned into +-Inf on the host and showed up as pure red/green/blue dots once
+    // lighting and TAA spread them (AMD, moving camera). Inf and NaN inputs stay as they are.
+    const auto rtz = [this](const IR::F32& value) {
+        const IR::F32 max_half{ir.Imm32(65504.0f)};
+        const IR::F32 clamped{ir.FPClamp(value, ir.Imm32(-65504.0f), max_half)};
+        const IR::U1 keep{ir.LogicalOr(ir.FPIsNan(value), ir.FPIsInf(value))};
+        return IR::F32{ir.Select(keep, value, clamped)};
+    };
+    const IR::Value vec_f32 = ir.CompositeConstruct(rtz(GetSrc<IR::F32>(inst.src[0])),
+                                                    rtz(GetSrc<IR::F32>(inst.src[1])));
     SetDst(inst.dst[0], ir.Pack2x16(AmdGpu::NumberFormat::Float, vec_f32));
 }
 
