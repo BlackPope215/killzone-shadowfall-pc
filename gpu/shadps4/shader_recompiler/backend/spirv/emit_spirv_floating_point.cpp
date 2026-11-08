@@ -40,8 +40,10 @@ Id EmitFPFma64(EmitContext& ctx, IR::Inst* inst, Id a, Id b, Id c) {
     return Decorate(ctx, inst, ctx.OpFma(ctx.F64[1], a, b, c));
 }
 
+// gow3: GCN V_MIN/V_MAX_F32 return the non-NaN operand. GLSL FMin/FMax/FClamp are undefined for
+// NaN and drivers differ (stray bright pixels on AMD), so use NMin/NMax, as BP05 does for saturate.
 Id EmitFPMax32(EmitContext& ctx, Id a, Id b) {
-    return ctx.OpFMax(ctx.F32[1], a, b);
+    return ctx.OpNMax(ctx.F32[1], a, b);
 }
 
 Id EmitFPMax64(EmitContext& ctx, Id a, Id b) {
@@ -49,7 +51,7 @@ Id EmitFPMax64(EmitContext& ctx, Id a, Id b) {
 }
 
 Id EmitFPMin32(EmitContext& ctx, Id a, Id b) {
-    return ctx.OpFMin(ctx.F32[1], a, b);
+    return ctx.OpNMin(ctx.F32[1], a, b);
 }
 
 Id EmitFPMin64(EmitContext& ctx, Id a, Id b) {
@@ -60,22 +62,22 @@ Id EmitFPMinTri32(EmitContext& ctx, Id a, Id b, Id c) {
     if (ctx.profile.supports_trinary_minmax) {
         return ctx.OpFMin3AMD(ctx.F32[1], a, b, c);
     }
-    return ctx.OpFMin(ctx.F32[1], a, ctx.OpFMin(ctx.F32[1], b, c));
+    return ctx.OpNMin(ctx.F32[1], a, ctx.OpNMin(ctx.F32[1], b, c));
 }
 
 Id EmitFPMaxTri32(EmitContext& ctx, Id a, Id b, Id c) {
     if (ctx.profile.supports_trinary_minmax) {
         return ctx.OpFMax3AMD(ctx.F32[1], a, b, c);
     }
-    return ctx.OpFMax(ctx.F32[1], a, ctx.OpFMax(ctx.F32[1], b, c));
+    return ctx.OpNMax(ctx.F32[1], a, ctx.OpNMax(ctx.F32[1], b, c));
 }
 
 Id EmitFPMedTri32(EmitContext& ctx, Id a, Id b, Id c) {
     if (ctx.profile.supports_trinary_minmax) {
         return ctx.OpFMid3AMD(ctx.F32[1], a, b, c);
     }
-    const Id mmx{ctx.OpFMin(ctx.F32[1], ctx.OpFMax(ctx.F32[1], a, b), c)};
-    return ctx.OpFMax(ctx.F32[1], ctx.OpFMin(ctx.F32[1], a, b), mmx);
+    const Id mmx{ctx.OpNMin(ctx.F32[1], ctx.OpNMax(ctx.F32[1], a, b), c)};
+    return ctx.OpNMax(ctx.F32[1], ctx.OpNMin(ctx.F32[1], a, b), mmx);
 }
 
 Id EmitFPMul32(EmitContext& ctx, IR::Inst* inst, Id a, Id b) {
@@ -170,7 +172,7 @@ Id EmitFPSaturate64(EmitContext& ctx, Id value) {
 }
 
 Id EmitFPClamp32(EmitContext& ctx, Id value, Id min_value, Id max_value) {
-    return ctx.OpFClamp(ctx.F32[1], value, min_value, max_value);
+    return ctx.OpNMin(ctx.F32[1], ctx.OpNMax(ctx.F32[1], value, min_value), max_value);
 }
 
 Id EmitFPClamp64(EmitContext& ctx, Id value, Id min_value, Id max_value) {
