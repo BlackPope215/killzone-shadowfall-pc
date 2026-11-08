@@ -26,7 +26,7 @@ void Translator::EmitVectorAlu(const GcnInst& inst) {
     case Opcode::V_SUBREV_F32:
         return V_SUBREV_F32(inst);
     case Opcode::V_MAC_LEGACY_F32:
-        return V_MAC_F32(inst);
+        return V_MAC_LEGACY_F32(inst);
     case Opcode::V_MUL_LEGACY_F32:
         return V_MUL_LEGACY_F32(inst);
     case Opcode::V_MUL_F32:
@@ -436,7 +436,7 @@ void Translator::EmitVectorAlu(const GcnInst& inst) {
 
         // VOP3a
     case Opcode::V_MAD_LEGACY_F32:
-        return V_MAD_F32(inst);
+        return V_MAD_LEGACY_F32(inst);
     case Opcode::V_MAD_F32:
         return V_MAD_F32(inst);
     case Opcode::V_MAD_I32_I24:
@@ -628,14 +628,7 @@ void Translator::V_MUL_F32(const GcnInst& inst) {
 void Translator::V_MUL_LEGACY_F32(const GcnInst& inst) {
     // GCN V_MUL_LEGACY_F32: if either source is zero, the result is +0.0
     // regardless of the other operand (even if NaN or Inf).
-    // Standard IEEE multiply would produce NaN for 0 * Inf.
-    const IR::F32 src0{GetSrc<IR::F32>(inst.src[0])};
-    const IR::F32 src1{GetSrc<IR::F32>(inst.src[1])};
-    const IR::F32 zero{ir.Imm32(0.0f)};
-    const IR::U1 src0_zero{ir.FPEqual(src0, zero)};
-    const IR::U1 src1_zero{ir.FPEqual(src1, zero)};
-    const IR::U1 either_zero{ir.LogicalOr(src0_zero, src1_zero)};
-    SetDst(inst.dst[0], IR::F32{ir.Select(either_zero, zero, ir.FPMul(src0, src1))});
+    SetDst(inst.dst[0], LegacyMul(GetSrc<IR::F32>(inst.src[0]), GetSrc<IR::F32>(inst.src[1])));
 }
 
 void Translator::V_MUL_I32_I24(const GcnInst& inst, bool is_signed) {
@@ -751,6 +744,21 @@ void Translator::V_MAC_F32(const GcnInst& inst) {
     const auto src1 = GetSrc<IR::F32>(inst.src[1]);
     const auto dst0 = GetSrc<IR::F32>(inst.dst[0]);
     SetDst(inst.dst[0], ir.FPAdd(ir.FPMul(src0, src1), dst0));
+}
+
+// gow3: GCN *_LEGACY_F32 multiply rule (DX9): 0 * x = +0 even when x is Inf or NaN. A plain
+// IEEE multiply gives NaN for 0 * Inf, and that NaN ends up as a stray bright pixel.
+IR::F32 Translator::LegacyMul(const IR::F32& src0, const IR::F32& src1) {
+    const IR::F32 zero{ir.Imm32(0.0f)};
+    const IR::U1 either_zero{ir.LogicalOr(ir.FPEqual(src0, zero), ir.FPEqual(src1, zero))};
+    return IR::F32{ir.Select(either_zero, zero, ir.FPMul(src0, src1))};
+}
+
+void Translator::V_MAC_LEGACY_F32(const GcnInst& inst) {
+    const auto src0 = GetSrc<IR::F32>(inst.src[0]);
+    const auto src1 = GetSrc<IR::F32>(inst.src[1]);
+    const auto dst0 = GetSrc<IR::F32>(inst.dst[0]);
+    SetDst(inst.dst[0], ir.FPAdd(LegacyMul(src0, src1), dst0));
 }
 
 void Translator::V_MADMK_F32(const GcnInst& inst) {
@@ -1077,7 +1085,8 @@ void Translator::V_RCP_LEGACY_F32(const GcnInst& inst) {
     const auto result = ir.FPRecip(src0);
     const auto inf = ir.FPIsInf(result);
 
-    const auto raw_result = ir.ConvertFToU(32, result);
+    // gow3: read the sign bit (a numeric FToU of +-Inf is undefined in SPIR-V).
+    const IR::U32 raw_result{ir.BitCast<IR::U32>(IR::F32{result})};
     const auto sign_bit = ir.ShiftRightLogical(raw_result, ir.Imm32(31u));
     const auto sign_bit_set = ir.INotEqual(sign_bit, ir.Imm32(0u));
     const IR::F32 inf_result{ir.Select(sign_bit_set, ir.Imm32(-0.0f), ir.Imm32(0.0f))};
@@ -1399,6 +1408,13 @@ void Translator::V_MAD_F32(const GcnInst& inst) {
     const IR::F32 src1{GetSrc<IR::F32>(inst.src[1])};
     const IR::F32 src2{GetSrc<IR::F32>(inst.src[2])};
     SetDst(inst.dst[0], ir.FPAdd(ir.FPMul(src0, src1), src2));
+}
+
+void Translator::V_MAD_LEGACY_F32(const GcnInst& inst) {
+    const IR::F32 src0{GetSrc<IR::F32>(inst.src[0])};
+    const IR::F32 src1{GetSrc<IR::F32>(inst.src[1])};
+    const IR::F32 src2{GetSrc<IR::F32>(inst.src[2])};
+    SetDst(inst.dst[0], ir.FPAdd(LegacyMul(src0, src1), src2));
 }
 
 void Translator::V_MAD_I32_I24(const GcnInst& inst, bool is_signed) {
