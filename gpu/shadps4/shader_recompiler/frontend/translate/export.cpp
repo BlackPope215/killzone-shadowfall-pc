@@ -103,6 +103,35 @@ void Translator::ExportRenderTarget(const GcnInst& inst) {
                                     color_buffer.data_format == AmdGpu::DataFormat::Format8_8 ||
                                     color_buffer.data_format == AmdGpu::DataFormat::Format8_8_8_8);
 
+    // gow3: the colour block stores a finite value past the format's largest one as that largest
+    // value (round toward zero), never as infinity. The host rounds to nearest, so an HDR value
+    // above 65504 (16-bit float) or 64512/65024 (10/11-bit float) became +-Inf and spread as
+    // coloured dots and streaks while the camera moved (AMD). Inf and NaN pass through.
+    float float_max = 0.0f;
+    if (color_buffer.num_format == AmdGpu::NumberFormat::Float) {
+        switch (color_buffer.data_format) {
+        case AmdGpu::DataFormat::Format16:
+        case AmdGpu::DataFormat::Format16_16:
+        case AmdGpu::DataFormat::Format16_16_16_16:
+            float_max = 65504.0f;
+            break;
+        case AmdGpu::DataFormat::Format10_11_11:
+        case AmdGpu::DataFormat::Format11_11_10:
+            float_max = 64512.0f; // the 10-bit channel's largest value, safe for all three
+            break;
+        default:
+            break;
+        }
+    }
+    const auto clamp_finite = [&](const IR::F32& value) {
+        if (float_max == 0.0f) {
+            return value;
+        }
+        const IR::F32 clamped{ir.FPClamp(value, ir.Imm32(-float_max), ir.Imm32(float_max))};
+        const IR::U1 keep{ir.LogicalOr(ir.FPIsNan(value), ir.FPIsInf(value))};
+        return IR::F32{ir.Select(keep, value, clamped)};
+    };
+
     // Swizzle components and export
     for (u32 i = 0; i < 4; ++i) {
         const auto swizzled_comp = components[color_buffer.swizzle.Map(i)];
@@ -110,6 +139,7 @@ void Translator::ExportRenderTarget(const GcnInst& inst) {
             continue;
         }
         auto converted = ApplyWriteNumberConversion(ir, swizzled_comp, color_buffer.num_conversion);
+        converted = clamp_finite(converted);
         if (needs_unorm_fixup) {
             // FIXME: Fix-up for GPUs where float-to-unorm rounding is off from expected.
             converted = ir.FPSub(converted, ir.Imm32(1.f / 127500.f));
