@@ -610,7 +610,7 @@ void Scheduler::PriorityPendingOpsThread(std::stop_token stoken) {
 void DynamicState::Commit(const Instance& instance, const vk::CommandBuffer& cmdbuf) {
     // A null command buffer only updates the dirty flags, exactly as recording would.
     CommitWith(instance.IsDepthBoundsSupported(), instance.IsDynamicColorWriteMaskSupported(),
-               instance.IsAttachmentFeedbackLoopLayoutSupported(), [&](auto&& command) {
+               instance.IsAttachmentFeedbackLoopDynamicStateSupported(), [&](auto&& command) {
                    if (cmdbuf) {
                        command(cmdbuf);
                    }

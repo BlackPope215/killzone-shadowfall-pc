@@ -342,13 +342,13 @@ bool Instance::CreateDevice() {
         maintenance_8 = !(env && env[0] == '1') && add_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
     }
     attachment_feedback_loop = add_extension(VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME);
+    // gow3: the layout alone is enough (AMD's Windows driver has no dynamic-state extension):
+    // without it the feedback loops fell back to GENERAL, which the spec does not allow for a
+    // render target that is also sampled, and AMD returned garbage blocks (stray coloured pixels
+    // on edges). Without the dynamic state, graphics pipelines get the feedback-loop create flag.
     if (attachment_feedback_loop) {
-        attachment_feedback_loop =
+        attachment_feedback_loop_dynamic =
             add_extension(VK_EXT_ATTACHMENT_FEEDBACK_LOOP_DYNAMIC_STATE_EXTENSION_NAME);
-        if (!attachment_feedback_loop) {
-            // We want both extensions so remove the first if the second isn't available
-            enabled_extensions.pop_back();
-        }
     }
     depth_range_unrestricted = add_extension(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME);
     dynamic_state_3 = add_extension(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
@@ -779,6 +779,8 @@ bool Instance::CreateDevice() {
     }
     if (!attachment_feedback_loop) {
         device_chain.unlink<vk::PhysicalDeviceAttachmentFeedbackLoopLayoutFeaturesEXT>();
+    }
+    if (!attachment_feedback_loop_dynamic) {
         device_chain.unlink<vk::PhysicalDeviceAttachmentFeedbackLoopDynamicStateFeaturesEXT>();
     }
     if (!shader_atomic_float2) {

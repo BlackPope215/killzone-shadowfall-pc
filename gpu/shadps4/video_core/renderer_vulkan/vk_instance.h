@@ -156,6 +156,11 @@ public:
         return attachment_feedback_loop;
     }
 
+    /// gow3: Returns true if VK_EXT_attachment_feedback_loop_dynamic_state is supported too
+    bool IsAttachmentFeedbackLoopDynamicStateSupported() const {
+        return attachment_feedback_loop_dynamic;
+    }
+
     /// Returns true when VK_EXT_custom_border_color is supported
     bool IsCustomBorderColorSupported() const {
         return custom_border_color;
@@ -593,6 +598,7 @@ private:
     bool maintenance_8{};
     bool maximal_reconvergence{};
     bool attachment_feedback_loop{};
+    bool attachment_feedback_loop_dynamic{};
     bool image_2d_view_of_3d{};
     bool image_view_min_lod{};
     bool shader_clock{};

@@ -414,8 +414,16 @@ GraphicsPipeline::GraphicsPipeline(
     // In practice, we use dynamic state for all of it.
     constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_info = {};
 
+    // gow3: feedback-loop layout without its dynamic state (AMD on Windows): every pipeline may
+    // draw into a colour target that is also sampled, so it carries the static flag.
+    const vk::PipelineCreateFlags feedback_flags =
+        instance.IsAttachmentFeedbackLoopLayoutSupported() &&
+                !instance.IsAttachmentFeedbackLoopDynamicStateSupported()
+            ? vk::PipelineCreateFlagBits::eColorAttachmentFeedbackLoopEXT
+            : vk::PipelineCreateFlags{};
     const vk::GraphicsPipelineCreateInfo pipeline_info = {
         .pNext = &pipeline_rendering_ci,
+        .flags = feedback_flags,
         .stageCount = static_cast<u32>(shader_stages.size()),
         .pStages = shader_stages.data(),
         .pVertexInputState = !instance.IsVertexInputDynamicState() ? &vertex_input_info : nullptr,
