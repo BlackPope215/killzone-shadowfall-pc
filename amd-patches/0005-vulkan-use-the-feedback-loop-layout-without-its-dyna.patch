@@ -1,0 +1,133 @@
+From b42c31fa9c1b697f62273392aa159094f28a43b1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pape=C5=BE?= <martin.papez@gmail.com>
+Date: Mon, 9 Nov 2026 00:21:39 +0100
+Subject: [PATCH 05/11] vulkan: use the feedback-loop layout without its
+ dynamic-state extension
+
+AMD's Windows driver (RX 7900 XT, 26.11.1) has VK_EXT_attachment_feedback_loop_layout but not
+VK_EXT_attachment_feedback_loop_dynamic_state. The port dropped both, so render targets that
+are also sampled in the same pass (Killzone: the G-buffer passes, the lighting combine, the HDR
+post passes; 10 passes per frame with "fb 1" in the frame analyzer) fell back to GENERAL, which
+the spec does not allow for a feedback loop. AMD then returns garbage in blocks: stray purple and
+coloured dashes along geometry edges that change with the view.
+
+- keep the layout extension when only the dynamic state is missing
+- graphics pipelines get VK_PIPELINE_CREATE_COLOR_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT in that case
+- vkCmdSetAttachmentFeedbackLoopEnableEXT only with the dynamic-state extension
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JF414jy1cdTDi9JXbSh73A
+---
+ .../renderer_vulkan/vk_graphics_pipeline.cpp         |  8 ++++++++
+ .../video_core/renderer_vulkan/vk_instance.cpp       | 12 +++++++-----
+ gpu/shadps4/video_core/renderer_vulkan/vk_instance.h |  6 ++++++
+ .../video_core/renderer_vulkan/vk_rasterizer.cpp     |  2 +-
+ .../video_core/renderer_vulkan/vk_scheduler.cpp      |  2 +-
+ 5 files changed, 23 insertions(+), 7 deletions(-)
+
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_graphics_pipeline.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+index 12995c2..b0109ba 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+@@ -414,8 +414,16 @@ GraphicsPipeline::GraphicsPipeline(
+     // In practice, we use dynamic state for all of it.
+     constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_info = {};
+ 
++    // gow3: feedback-loop layout without its dynamic state (AMD on Windows): every pipeline may
++    // draw into a colour target that is also sampled, so it carries the static flag.
++    const vk::PipelineCreateFlags feedback_flags =
++        instance.IsAttachmentFeedbackLoopLayoutSupported() &&
++                !instance.IsAttachmentFeedbackLoopDynamicStateSupported()
++            ? vk::PipelineCreateFlagBits::eColorAttachmentFeedbackLoopEXT
++            : vk::PipelineCreateFlags{};
+     const vk::GraphicsPipelineCreateInfo pipeline_info = {
+         .pNext = &pipeline_rendering_ci,
++        .flags = feedback_flags,
+         .stageCount = static_cast<u32>(shader_stages.size()),
+         .pStages = shader_stages.data(),
+         .pVertexInputState = !instance.IsVertexInputDynamicState() ? &vertex_input_info : nullptr,
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
+index 912957d..eee798b 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_instance.cpp
+@@ -342,13 +342,13 @@ bool Instance::CreateDevice() {
+         maintenance_8 = !(env && env[0] == '1') && add_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
+     }
+     attachment_feedback_loop = add_extension(VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME);
++    // gow3: the layout alone is enough (AMD's Windows driver has no dynamic-state extension):
++    // without it the feedback loops fell back to GENERAL, which the spec does not allow for a
++    // render target that is also sampled, and AMD returned garbage blocks (stray coloured pixels
++    // on edges). Without the dynamic state, graphics pipelines get the feedback-loop create flag.
+     if (attachment_feedback_loop) {
+-        attachment_feedback_loop =
++        attachment_feedback_loop_dynamic =
+             add_extension(VK_EXT_ATTACHMENT_FEEDBACK_LOOP_DYNAMIC_STATE_EXTENSION_NAME);
+-        if (!attachment_feedback_loop) {
+-            // We want both extensions so remove the first if the second isn't available
+-            enabled_extensions.pop_back();
+-        }
+     }
+     depth_range_unrestricted = add_extension(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME);
+     dynamic_state_3 = add_extension(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+@@ -779,6 +779,8 @@ bool Instance::CreateDevice() {
+     }
+     if (!attachment_feedback_loop) {
+         device_chain.unlink<vk::PhysicalDeviceAttachmentFeedbackLoopLayoutFeaturesEXT>();
++    }
++    if (!attachment_feedback_loop_dynamic) {
+         device_chain.unlink<vk::PhysicalDeviceAttachmentFeedbackLoopDynamicStateFeaturesEXT>();
+     }
+     if (!shader_atomic_float2) {
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_instance.h b/gpu/shadps4/video_core/renderer_vulkan/vk_instance.h
+index f04541a..85196e2 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_instance.h
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_instance.h
+@@ -156,6 +156,11 @@ public:
+         return attachment_feedback_loop;
+     }
+ 
++    /// gow3: Returns true if VK_EXT_attachment_feedback_loop_dynamic_state is supported too
++    bool IsAttachmentFeedbackLoopDynamicStateSupported() const {
++        return attachment_feedback_loop_dynamic;
++    }
++
+     /// Returns true when VK_EXT_custom_border_color is supported
+     bool IsCustomBorderColorSupported() const {
+         return custom_border_color;
+@@ -593,6 +598,7 @@ private:
+     bool maintenance_8{};
+     bool maximal_reconvergence{};
+     bool attachment_feedback_loop{};
++    bool attachment_feedback_loop_dynamic{};
+     bool image_2d_view_of_3d{};
+     bool image_view_min_lod{};
+     bool shader_clock{};
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp
+index f89f836..151200b 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -3761,7 +3761,7 @@ void Rasterizer::UpdateDynamicState(const GraphicsPipeline* pipeline, const bool
+     auto& dynamic_state = scheduler.GetDynamicState();
+     dynamic_state.CommitWith(instance.IsDepthBoundsSupported(),
+                              instance.IsDynamicColorWriteMaskSupported(),
+-                             instance.IsAttachmentFeedbackLoopLayoutSupported(),
++                             instance.IsAttachmentFeedbackLoopDynamicStateSupported(),
+                              [&](auto&& command) { scheduler.Record(std::move(command)); });
+ }
+ 
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
+index 4278361..18ae600 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp
+@@ -610,7 +610,7 @@ void Scheduler::PriorityPendingOpsThread(std::stop_token stoken) {
+ void DynamicState::Commit(const Instance& instance, const vk::CommandBuffer& cmdbuf) {
+     // A null command buffer only updates the dirty flags, exactly as recording would.
+     CommitWith(instance.IsDepthBoundsSupported(), instance.IsDynamicColorWriteMaskSupported(),
+-               instance.IsAttachmentFeedbackLoopLayoutSupported(), [&](auto&& command) {
++               instance.IsAttachmentFeedbackLoopDynamicStateSupported(), [&](auto&& command) {
+                    if (cmdbuf) {
+                        command(cmdbuf);
+                    }
+-- 
+2.56.0.windows.4
+

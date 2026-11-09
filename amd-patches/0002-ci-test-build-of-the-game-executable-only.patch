@@ -1,0 +1,85 @@
+From a37754cf847a2c99a79cd063642d33b3f319e405 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pape=C5=BE?= <martin.papez@gmail.com>
+Date: Sun, 8 Nov 2026 23:39:33 +0100
+Subject: [PATCH 02/11] ci: test build of the game executable only
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JF414jy1cdTDi9JXbSh73A
+---
+ .github/workflows/kz-test-build.yml           | 50 +++++++++++++++++++
+ .../vk_pipeline_serialization.cpp             |  2 +-
+ 2 files changed, 51 insertions(+), 1 deletion(-)
+ create mode 100644 .github/workflows/kz-test-build.yml
+
+diff --git a/.github/workflows/kz-test-build.yml b/.github/workflows/kz-test-build.yml
+new file mode 100644
+index 0000000..5bd4361
+--- /dev/null
++++ b/.github/workflows/kz-test-build.yml
+@@ -0,0 +1,50 @@
++# Test build of the game executable only (no launcher, no FSR 4 assets), for trying a fix on an
++# existing install: replace bin\ of a COPY of the install with the artifact's contents.
++# launcher/kzsf.ico is not in git (it is made from the player's dump), so a placeholder icon is used.
++name: KZ test build (game exe only)
++
++on:
++  workflow_dispatch:
++
++jobs:
++  build:
++    runs-on: windows-2025
++    timeout-minutes: 150
++    defaults:
++      run:
++        shell: msys2 {0}
++    steps:
++      - name: Keep LF line endings
++        shell: pwsh
++        run: git config --global core.autocrlf false
++      - uses: actions/checkout@v4
++        with:
++          submodules: recursive
++      - uses: msys2/setup-msys2@v2
++        with:
++          msystem: CLANG64
++          release: false
++          update: true
++          install: git patch
++          pacboy: >-
++            toolchain:p cmake:p ninja:p pkgconf:p python:p
++            vulkan-headers:p vulkan-loader:p vulkan-memory-allocator:p glslang:p
++            sdl3:p fmt:p boost:p robin-map:p xxhash:p ffmpeg:p zydis:p
++            spirv-tools:p spirv-headers:p spirv-cross:p
++      - name: Placeholder icon
++        run: cp launcher/gow3.ico launcher/kzsf.ico
++      - name: Build
++        run: bash build.sh
++      - name: Collect the game executable and its DLLs
++        run: |
++          mkdir -p dist/bin
++          llvm-strip --strip-debug -o dist/bin/KillzoneShadowFall.exe out/gow3-probe.exe
++          ldd dist/bin/KillzoneShadowFall.exe | awk '/\/clang64\/bin\// {print $3}' | sort -u | while read -r dll; do
++            cp -u "$dll" dist/bin/
++          done
++          ls -la dist/bin
++      - uses: actions/upload-artifact@v4
++        with:
++          name: KillzoneShadowFall-bin-test
++          path: dist/bin/
++          if-no-files-found: error
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+index 6a22838..3152d6f 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+@@ -36,7 +36,7 @@
+ 
+ namespace Serialization {
+ /* You should increment versions below once corresponding serialization scheme is changed. */
+-static constexpr u32 ShaderBinaryVersion = 9u; // gow3: ps4_core backports BP03/04/05/06 (2026-10-25)
++static constexpr u32 ShaderBinaryVersion = 10u; // gow3: ps4_core backports BP03/04/05/06 (2026-10-25)
+ static constexpr u32 ShaderMetaVersion = 7u; // gow3: ImageResource::needs_native
+ static constexpr u32 PipelineKeyVersion = 5u; // gow3: Info layout (ImageResource::needs_native)
+ } // namespace Serialization
+-- 
+2.56.0.windows.4
+
