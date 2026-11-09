@@ -1,0 +1,349 @@
+From 5a432a712a9aa819b145f014e5a8d6746d64337f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pape=C5=BE?= <martin.papez@gmail.com>
+Date: Mon, 9 Nov 2026 19:32:15 +0100
+Subject: [PATCH] vulkan: GOW3_FB_COPY feedback-loop snapshots for decal pass
+ 53ee1598
+
+Killzone's decal box pass (ps 53ee1598) draws into the five G-buffer
+targets while sampling them. Reads of other texels than the fragment's
+own race with the draw; on RDNA3 that shows as flashing coloured dots
+and purple edge dashes. Copy the sampled targets before the draw and
+bind the copies. GOW3_FB_COPY=0 turns it off, =all applies it to every
+feedback-loop draw, or a list of pixel shader hashes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JF414jy1cdTDi9JXbSh73A
+---
+ .../renderer_vulkan/vk_feedback_copy.h        |  81 +++++++++
+ .../renderer_vulkan/vk_rasterizer.cpp         | 165 ++++++++++++++++++
+ .../renderer_vulkan/vk_rasterizer.h           |   7 +
+ 3 files changed, 253 insertions(+)
+ create mode 100644 gpu/shadps4/video_core/renderer_vulkan/vk_feedback_copy.h
+
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_feedback_copy.h b/gpu/shadps4/video_core/renderer_vulkan/vk_feedback_copy.h
+new file mode 100644
+index 0000000..3886db1
+--- /dev/null
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_feedback_copy.h
+@@ -0,0 +1,81 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// gow3: GOW3_FB_COPY, feedback-loop snapshots.
++//
++// Some Killzone passes draw into G-buffer targets while sampling the same targets (decal boxes,
++// pass "fb 1" in the frame analyzer). Vulkan only defines such a read for the texel a fragment
++// writes itself; filtered or neighbouring reads race with the other fragments of the draw. On
++// RDNA3 (RX 7000) that race shows up as flashing coloured dots and purple edge dashes; NVIDIA
++// happens to return the old values. With a snapshot the pass samples a copy of the targets made
++// just before the draw, which is what the PS4 effectively read.
++//
++// GOW3_FB_COPY unset: snapshot for the pixel shaders known to need it (DefaultHashes).
++// GOW3_FB_COPY=0 / off: never.  GOW3_FB_COPY=all: every feedback-loop draw.
++// GOW3_FB_COPY=<hex hashes>: these pixel shaders (lower 32 bits, as the frame analyzer prints).
++#pragma once
++
++#include <cctype>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++#include <unordered_set>
++
++#include "common/types.h"
++
++namespace Vulkan::FeedbackCopy {
++
++/// Pixel shaders found to need a snapshot (bisected with GOW3_SKIP_FILE on an RX 7900 XT).
++inline constexpr u32 DefaultHashes[] = {
++    0x53ee1598, // decal box writing all five G-buffer targets (bedroom lamp, frame pass #62)
++};
++
++struct Config {
++    bool all = false;
++    std::unordered_set<u32> hashes;
++};
++
++inline const Config& Get() {
++    static const Config config = [] {
++        Config c;
++        const char* env = std::getenv("GOW3_FB_COPY");
++        std::string value = env ? env : "";
++        for (auto& ch : value) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
++        if (value == "0" || value == "off" || value == "no") {
++            std::printf("GPU: feedback-loop snapshots off (GOW3_FB_COPY)\n");
++            return c;
++        }
++        if (value == "all" || value == "1") {
++            c.all = true;
++            std::printf("GPU: feedback-loop snapshots for every feedback-loop draw\n");
++            return c;
++        }
++        if (value.empty()) {
++            for (const u32 h : DefaultHashes) c.hashes.insert(h);
++        } else {
++            std::string token;
++            auto flush = [&] {
++                if (!token.empty()) {
++                    if (token.size() > 8) token = token.substr(token.size() - 8);
++                    c.hashes.insert(static_cast<u32>(std::strtoul(token.c_str(), nullptr, 16)));
++                    token.clear();
++                }
++            };
++            for (const char ch : value) {
++                if (std::isxdigit(static_cast<unsigned char>(ch))) token += ch;
++                else if (ch == 'x' && token == "0") token.clear();
++                else flush();
++            }
++            flush();
++        }
++        std::printf("GPU: feedback-loop snapshots for %zu pixel shader(s)\n", c.hashes.size());
++        return c;
++    }();
++    return config;
++}
++
++inline bool Wanted(u64 ps_hash) {
++    const auto& c = Get();
++    return c.all || (!c.hashes.empty() && c.hashes.contains(static_cast<u32>(ps_hash)));
++}
++
++} // namespace Vulkan::FeedbackCopy
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp
+index 0018a77..999f9b4 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp
+@@ -30,12 +30,17 @@
+ #include "video_core/renderer_vulkan/vk_shader_skip.h"
+ #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
+ #include "gow3_threads.h"
++#include "video_core/renderer_vulkan/vk_feedback_copy.h"
+ #include "video_core/renderer_vulkan/vk_runtime.h"
+ #include "video_core/renderer_vulkan/vk_scheduler.h"
+ #include "video_core/renderer_vulkan/vk_shader_hle.h"
+ #include "video_core/texture_cache/image_view.h"
+ #include "video_core/texture_cache/texture_cache.h"
+ 
++namespace VideoCore {
++vk::ImageViewType ConvertImageViewType(AmdGpu::ImageType type); // image_view.cpp
++}
++
+ namespace Vulkan {
+ 
+ namespace {
+@@ -224,8 +229,166 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
+     });
+ }
+ 
++/// gow3: GOW3_FB_COPY: a copy of a render target that the draw also samples.
++struct Rasterizer::FeedbackSnapshot {
++    VideoCore::UniqueImage image;
++    std::vector<std::pair<VideoCore::ImageViewInfo, vk::UniqueImageView>> views;
++};
++
+ Rasterizer::~Rasterizer() = default;
+ 
++void Rasterizer::SnapshotFeedbackTextures(const GraphicsPipeline* pipeline) {
++    const auto* ps = pipeline->GetStages()[static_cast<u32>(Shader::SwStage::Fragment)];
++    if (!ps || !FeedbackCopy::Wanted(ps->pgm_hash)) {
++        return;
++    }
++    const auto feedback_layout = instance.IsAttachmentFeedbackLoopLayoutSupported()
++                                     ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
++                                     : vk::ImageLayout::eGeneral;
++    bool rendering_ended = false;
++    for (u32 cb = 0; cb < cb_descs.size(); ++cb) {
++        const auto image_id = cb_descs[cb].first;
++        if (!image_id) {
++            continue;
++        }
++        auto& image = texture_cache.GetImage(image_id);
++        if (!image.binding.is_bound || image.info.props.is_depth || !image.backing ||
++            image.backing->num_samples > 1) {
++            continue;
++        }
++        for (auto& info : image_infos) {
++            if (!info.imageView || info.imageLayout != feedback_layout) {
++                continue;
++            }
++            // Which view of this target the descriptor holds.
++            const VideoCore::ImageViewInfo* view_info = nullptr;
++            const auto& ids = image.backing->image_view_ids;
++            for (size_t v = 0; v < ids.size(); ++v) {
++                if (*texture_cache.GetImageView(ids[v]).image_view == info.imageView) {
++                    view_info = &image.backing->image_view_infos[v];
++                    break;
++                }
++            }
++            if (!view_info || view_info->is_storage) {
++                continue;
++            }
++            auto& snap = feedback_snapshots[image.image_uid];
++            const auto& src_ci = image.backing->image.image_ci;
++            if (snap && (snap->image.image_ci.extent != src_ci.extent ||
++                         snap->image.image_ci.format != src_ci.format ||
++                         snap->image.image_ci.mipLevels != src_ci.mipLevels ||
++                         snap->image.image_ci.arrayLayers != src_ci.arrayLayers)) {
++                snap.reset();
++            }
++            if (!snap) {
++                snap = std::make_unique<FeedbackSnapshot>();
++                snap->image = VideoCore::UniqueImage(instance.GetDevice(), instance.GetAllocator());
++                auto ci = src_ci;
++                ci.pNext = nullptr;
++                ci.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
++                ci.samples = vk::SampleCountFlagBits::e1;
++                ci.initialLayout = vk::ImageLayout::eUndefined;
++                snap->image.Create(ci);
++                static u32 reported = 0;
++                if (reported++ < 16) {
++                    LOG_INFO(Render_Vulkan,
++                             "gow3: feedback-loop snapshot for ps {:#010x}: {} {}x{} target",
++                             static_cast<u32>(ps->pgm_hash), vk::to_string(src_ci.format),
++                             src_ci.extent.width, src_ci.extent.height);
++                }
++            }
++            vk::ImageView snap_view{};
++            for (const auto& [key, view] : snap->views) {
++                if (key == *view_info) {
++                    snap_view = *view;
++                }
++            }
++            if (!snap_view) {
++                const vk::ImageViewUsageCreateInfo usage_ci{.usage =
++                                                                vk::ImageUsageFlagBits::eSampled};
++                auto [result, view] = instance.GetDevice().createImageViewUnique({
++                    .pNext = &usage_ci,
++                    .image = snap->image,
++                    .viewType = VideoCore::ConvertImageViewType(view_info->type),
++                    .format = instance.GetSupportedFormat(view_info->format, image.format_features),
++                    .components = view_info->mapping,
++                    .subresourceRange{
++                        .aspectMask = vk::ImageAspectFlagBits::eColor,
++                        .baseMipLevel = view_info->range.base.level,
++                        .levelCount = view_info->range.extent.levels,
++                        .baseArrayLayer = view_info->range.base.layer,
++                        .layerCount = view_info->range.extent.layers,
++                    },
++                });
++                if (result != vk::Result::eSuccess) {
++                    continue;
++                }
++                snap_view = *view;
++                snap->views.emplace_back(*view_info, std::move(view));
++            }
++
++            // Copy the levels and layers the view covers, outside the render pass.
++            if (!rendering_ended) {
++                scheduler.EndRendering();
++                rendering_ended = true;
++            }
++            const auto& range = view_info->range;
++            runtime.FlushBarriers(); // the binding's own transition first (one batch is unordered)
++            if (runtime.Transit(&image, vk::ImageLayout::eTransferSrcOptimal,
++                                vk::PipelineStageFlagBits2::eCopy,
++                                vk::AccessFlagBits2::eTransferRead)) {
++                runtime.FlushBarriers();
++            }
++            boost::container::small_vector<vk::ImageCopy, 4> regions;
++            for (u32 level = range.base.level; level < range.base.level + range.extent.levels;
++                 ++level) {
++                const vk::ImageSubresourceLayers sub{vk::ImageAspectFlagBits::eColor, level,
++                                                     range.base.layer, range.extent.layers};
++                regions.push_back({
++                    .srcSubresource = sub,
++                    .dstSubresource = sub,
++                    .extent = {std::max(src_ci.extent.width >> level, 1u),
++                               std::max(src_ci.extent.height >> level, 1u), 1},
++                });
++            }
++            const vk::ImageSubresourceRange snap_range{
++                vk::ImageAspectFlagBits::eColor, range.base.level, range.extent.levels,
++                range.base.layer, range.extent.layers};
++            scheduler.Record([src = image.GetImage(), dst = vk::Image(snap->image), regions,
++                              snap_range](vk::CommandBuffer cmdbuf) {
++                const vk::ImageMemoryBarrier2 to_copy{
++                    .srcStageMask = vk::PipelineStageFlagBits2::eAllGraphics,
++                    .srcAccessMask = vk::AccessFlagBits2::eShaderSampledRead,
++                    .dstStageMask = vk::PipelineStageFlagBits2::eCopy,
++                    .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
++                    .oldLayout = vk::ImageLayout::eUndefined,
++                    .newLayout = vk::ImageLayout::eTransferDstOptimal,
++                    .image = dst,
++                    .subresourceRange = snap_range,
++                };
++                cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1,
++                                         .pImageMemoryBarriers = &to_copy});
++                cmdbuf.copyImage(src, vk::ImageLayout::eTransferSrcOptimal, dst,
++                                 vk::ImageLayout::eTransferDstOptimal, regions);
++                const vk::ImageMemoryBarrier2 to_sample{
++                    .srcStageMask = vk::PipelineStageFlagBits2::eCopy,
++                    .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
++                    .dstStageMask = vk::PipelineStageFlagBits2::eAllGraphics,
++                    .dstAccessMask = vk::AccessFlagBits2::eShaderSampledRead,
++                    .oldLayout = vk::ImageLayout::eTransferDstOptimal,
++                    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
++                    .image = dst,
++                    .subresourceRange = snap_range,
++                };
++                cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1,
++                                         .pImageMemoryBarriers = &to_sample});
++            });
++            info.imageView = snap_view;
++            info.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
++        }
++    }
++}
++
+ inline const AmdGpu::Regs& Rasterizer::Regs() const {
+     return stage_regs ? *stage_regs : liverpool->regs;
+ }
+@@ -1256,6 +1419,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
+     if (!bound) {
+         return;
+     }
++    SnapshotFeedbackTextures(pipeline);
+     const auto state = BeginRendering(pipeline);
+ 
+     if (!inputs_resolved) {
+@@ -1478,6 +1642,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
+     if (!BindResources(pipeline)) {
+         return;
+     }
++    SnapshotFeedbackTextures(pipeline);
+     const auto state = BeginRendering(pipeline);
+ 
+     BindVertexBuffers(pipeline);
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.h b/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.h
+index 544604d..3e319b3 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.h
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.h
+@@ -19,6 +19,8 @@
+ #include "video_core/renderer_vulkan/vk_scheduler.h"
+ #include "video_core/texture_cache/texture_cache.h"
+ 
++#include <unordered_map>
++
+ namespace AmdGpu {
+ struct Liverpool;
+ }
+@@ -180,6 +182,9 @@ public:
+ private:
+     void PrepareRenderState(const GraphicsPipeline* pipeline);
+     RenderState BeginRendering(const GraphicsPipeline* pipeline);
++    /// gow3: GOW3_FB_COPY (vk_feedback_copy.h): the draw samples copies of the targets it
++    /// also draws into. Call after BindResources, before BeginRendering.
++    void SnapshotFeedbackTextures(const GraphicsPipeline* pipeline);
+     RenderState BeginRenderingFull(const GraphicsPipeline* pipeline);
+     /// gow3: a draw continuing the open render pass with the same inputs gets the same render
+     /// state (RenderStateMemo); nothing can have broken the pass in between (barriers, copies and
+@@ -387,6 +392,8 @@ private:
+     boost::container::static_vector<vk::DescriptorImageInfo, MaxDrawImages> image_infos;
+     boost::container::static_vector<vk::DescriptorBufferInfo, MaxDrawBuffers> buffer_infos;
+     boost::container::static_vector<VideoCore::ImageId, MaxDrawImages> bound_images;
++    struct FeedbackSnapshot;
++    std::unordered_map<u64, std::unique_ptr<FeedbackSnapshot>> feedback_snapshots;
+     /// The pipeline BindResources is binding (OnCommandFailed's log), else null.
+     const Pipeline* bind_pipeline = nullptr;
+     /// gow3 diagnostics (GOW3_DIAG_IMAGES=1, draw pipe off): while a frame capture records, the
+-- 
+2.43.0
+
