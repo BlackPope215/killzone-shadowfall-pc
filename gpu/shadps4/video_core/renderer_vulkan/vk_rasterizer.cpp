@@ -27,6 +27,7 @@
 #include "video_core/renderer_vulkan/vk_res_census.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/vk_shader_skip.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "gow3_threads.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -1382,7 +1383,10 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     const u32 num_instances = regs.num_instances.NumInstances();
     const u32 first_vertex = vertex_offset;
     const u32 first_instance = instance_offset;
-    scheduler.Record([=](vk::CommandBuffer cmdbuf) {
+    // gow3: GOW3_SKIP_FILE (vk_shader_skip.h) drops listed shaders to bisect an artifact.
+    const auto* skip_ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+    const bool skip_draw = ShaderSkip::Skip(vs_info.pgm_hash, skip_ps ? skip_ps->pgm_hash : 0);
+    if (!skip_draw) scheduler.Record([=](vk::CommandBuffer cmdbuf) {
         const auto draw = [&] {
             if (is_indexed) {
                 cmdbuf.drawIndexed(num_indices, num_instances, 0, s32(first_vertex),
@@ -1611,7 +1615,8 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     if (FrameCapture::Active()) {
         FrameCapture::Dispatch(cs.pgm_hash, dim_x, dim_y, dim_z);
     }
-    scheduler.Record([=](vk::CommandBuffer cmdbuf) {
+    // gow3: GOW3_SKIP_FILE (vk_shader_skip.h).
+    if (!ShaderSkip::Skip(cs.pgm_hash)) scheduler.Record([=](vk::CommandBuffer cmdbuf) {
         if (Scheduler::FullBarriers()) {
             Scheduler::RecordFullBarrier(cmdbuf);
         }
