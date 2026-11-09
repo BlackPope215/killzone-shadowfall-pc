@@ -30,11 +30,16 @@
 #include "video_core/renderer_vulkan/vk_shader_skip.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "gow3_threads.h"
+#include "video_core/renderer_vulkan/vk_feedback_copy.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/texture_cache.h"
+
+namespace VideoCore {
+vk::ImageViewType ConvertImageViewType(AmdGpu::ImageType type); // image_view.cpp
+}
 
 namespace Vulkan {
 
@@ -224,7 +229,165 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     });
 }
 
+/// gow3: GOW3_FB_COPY: a copy of a render target that the draw also samples.
+struct Rasterizer::FeedbackSnapshot {
+    VideoCore::UniqueImage image;
+    std::vector<std::pair<VideoCore::ImageViewInfo, vk::UniqueImageView>> views;
+};
+
 Rasterizer::~Rasterizer() = default;
+
+void Rasterizer::SnapshotFeedbackTextures(const GraphicsPipeline* pipeline) {
+    const auto* ps = pipeline->GetStages()[static_cast<u32>(Shader::SwStage::Fragment)];
+    if (!ps || !FeedbackCopy::Wanted(ps->pgm_hash)) {
+        return;
+    }
+    const auto feedback_layout = instance.IsAttachmentFeedbackLoopLayoutSupported()
+                                     ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
+                                     : vk::ImageLayout::eGeneral;
+    bool rendering_ended = false;
+    for (u32 cb = 0; cb < cb_descs.size(); ++cb) {
+        const auto image_id = cb_descs[cb].first;
+        if (!image_id) {
+            continue;
+        }
+        auto& image = texture_cache.GetImage(image_id);
+        if (!image.binding.is_bound || image.info.props.is_depth || !image.backing ||
+            image.backing->num_samples > 1) {
+            continue;
+        }
+        for (auto& info : image_infos) {
+            if (!info.imageView || info.imageLayout != feedback_layout) {
+                continue;
+            }
+            // Which view of this target the descriptor holds.
+            const VideoCore::ImageViewInfo* view_info = nullptr;
+            const auto& ids = image.backing->image_view_ids;
+            for (size_t v = 0; v < ids.size(); ++v) {
+                if (*texture_cache.GetImageView(ids[v]).image_view == info.imageView) {
+                    view_info = &image.backing->image_view_infos[v];
+                    break;
+                }
+            }
+            if (!view_info || view_info->is_storage) {
+                continue;
+            }
+            auto& snap = feedback_snapshots[image.image_uid];
+            const auto& src_ci = image.backing->image.image_ci;
+            if (snap && (snap->image.image_ci.extent != src_ci.extent ||
+                         snap->image.image_ci.format != src_ci.format ||
+                         snap->image.image_ci.mipLevels != src_ci.mipLevels ||
+                         snap->image.image_ci.arrayLayers != src_ci.arrayLayers)) {
+                snap.reset();
+            }
+            if (!snap) {
+                snap = std::make_unique<FeedbackSnapshot>();
+                snap->image = VideoCore::UniqueImage(instance.GetDevice(), instance.GetAllocator());
+                auto ci = src_ci;
+                ci.pNext = nullptr;
+                ci.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
+                ci.samples = vk::SampleCountFlagBits::e1;
+                ci.initialLayout = vk::ImageLayout::eUndefined;
+                snap->image.Create(ci);
+                static u32 reported = 0;
+                if (reported++ < 16) {
+                    LOG_INFO(Render_Vulkan,
+                             "gow3: feedback-loop snapshot for ps {:#010x}: {} {}x{} target",
+                             static_cast<u32>(ps->pgm_hash), vk::to_string(src_ci.format),
+                             src_ci.extent.width, src_ci.extent.height);
+                }
+            }
+            vk::ImageView snap_view{};
+            for (const auto& [key, view] : snap->views) {
+                if (key == *view_info) {
+                    snap_view = *view;
+                }
+            }
+            if (!snap_view) {
+                const vk::ImageViewUsageCreateInfo usage_ci{.usage =
+                                                                vk::ImageUsageFlagBits::eSampled};
+                auto [result, view] = instance.GetDevice().createImageViewUnique({
+                    .pNext = &usage_ci,
+                    .image = snap->image,
+                    .viewType = VideoCore::ConvertImageViewType(view_info->type),
+                    .format = instance.GetSupportedFormat(view_info->format, image.format_features),
+                    .components = view_info->mapping,
+                    .subresourceRange{
+                        .aspectMask = vk::ImageAspectFlagBits::eColor,
+                        .baseMipLevel = view_info->range.base.level,
+                        .levelCount = view_info->range.extent.levels,
+                        .baseArrayLayer = view_info->range.base.layer,
+                        .layerCount = view_info->range.extent.layers,
+                    },
+                });
+                if (result != vk::Result::eSuccess) {
+                    continue;
+                }
+                snap_view = *view;
+                snap->views.emplace_back(*view_info, std::move(view));
+            }
+
+            // Copy the levels and layers the view covers, outside the render pass.
+            if (!rendering_ended) {
+                scheduler.EndRendering();
+                rendering_ended = true;
+            }
+            const auto& range = view_info->range;
+            runtime.FlushBarriers(); // the binding's own transition first (one batch is unordered)
+            if (runtime.Transit(&image, vk::ImageLayout::eTransferSrcOptimal,
+                                vk::PipelineStageFlagBits2::eCopy,
+                                vk::AccessFlagBits2::eTransferRead)) {
+                runtime.FlushBarriers();
+            }
+            boost::container::small_vector<vk::ImageCopy, 4> regions;
+            for (u32 level = range.base.level; level < range.base.level + range.extent.levels;
+                 ++level) {
+                const vk::ImageSubresourceLayers sub{vk::ImageAspectFlagBits::eColor, level,
+                                                     range.base.layer, range.extent.layers};
+                regions.push_back({
+                    .srcSubresource = sub,
+                    .dstSubresource = sub,
+                    .extent = {std::max(src_ci.extent.width >> level, 1u),
+                               std::max(src_ci.extent.height >> level, 1u), 1},
+                });
+            }
+            const vk::ImageSubresourceRange snap_range{
+                vk::ImageAspectFlagBits::eColor, range.base.level, range.extent.levels,
+                range.base.layer, range.extent.layers};
+            scheduler.Record([src = image.GetImage(), dst = vk::Image(snap->image), regions,
+                              snap_range](vk::CommandBuffer cmdbuf) {
+                const vk::ImageMemoryBarrier2 to_copy{
+                    .srcStageMask = vk::PipelineStageFlagBits2::eAllGraphics,
+                    .srcAccessMask = vk::AccessFlagBits2::eShaderSampledRead,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eCopy,
+                    .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                    .oldLayout = vk::ImageLayout::eUndefined,
+                    .newLayout = vk::ImageLayout::eTransferDstOptimal,
+                    .image = dst,
+                    .subresourceRange = snap_range,
+                };
+                cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1,
+                                         .pImageMemoryBarriers = &to_copy});
+                cmdbuf.copyImage(src, vk::ImageLayout::eTransferSrcOptimal, dst,
+                                 vk::ImageLayout::eTransferDstOptimal, regions);
+                const vk::ImageMemoryBarrier2 to_sample{
+                    .srcStageMask = vk::PipelineStageFlagBits2::eCopy,
+                    .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eAllGraphics,
+                    .dstAccessMask = vk::AccessFlagBits2::eShaderSampledRead,
+                    .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+                    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                    .image = dst,
+                    .subresourceRange = snap_range,
+                };
+                cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1,
+                                         .pImageMemoryBarriers = &to_sample});
+            });
+            info.imageView = snap_view;
+            info.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
+    }
+}
 
 inline const AmdGpu::Regs& Rasterizer::Regs() const {
     return stage_regs ? *stage_regs : liverpool->regs;
@@ -1256,6 +1419,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     if (!bound) {
         return;
     }
+    SnapshotFeedbackTextures(pipeline);
     const auto state = BeginRendering(pipeline);
 
     if (!inputs_resolved) {
@@ -1478,6 +1642,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     if (!BindResources(pipeline)) {
         return;
     }
+    SnapshotFeedbackTextures(pipeline);
     const auto state = BeginRendering(pipeline);
 
     BindVertexBuffers(pipeline);
