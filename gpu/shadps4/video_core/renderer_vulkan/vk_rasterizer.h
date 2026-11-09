@@ -19,6 +19,8 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/texture_cache.h"
 
+#include <unordered_map>
+
 namespace AmdGpu {
 struct Liverpool;
 }
@@ -180,6 +182,9 @@ public:
 private:
     void PrepareRenderState(const GraphicsPipeline* pipeline);
     RenderState BeginRendering(const GraphicsPipeline* pipeline);
+    /// gow3: GOW3_FB_COPY (vk_feedback_copy.h): the draw samples copies of the targets it
+    /// also draws into. Call after BindResources, before BeginRendering.
+    void SnapshotFeedbackTextures(const GraphicsPipeline* pipeline);
     RenderState BeginRenderingFull(const GraphicsPipeline* pipeline);
     /// gow3: a draw continuing the open render pass with the same inputs gets the same render
     /// state (RenderStateMemo); nothing can have broken the pass in between (barriers, copies and
@@ -387,6 +392,8 @@ private:
     boost::container::static_vector<vk::DescriptorImageInfo, MaxDrawImages> image_infos;
     boost::container::static_vector<vk::DescriptorBufferInfo, MaxDrawBuffers> buffer_infos;
     boost::container::static_vector<VideoCore::ImageId, MaxDrawImages> bound_images;
+    struct FeedbackSnapshot;
+    std::unordered_map<u64, std::unique_ptr<FeedbackSnapshot>> feedback_snapshots;
     /// The pipeline BindResources is binding (OnCommandFailed's log), else null.
     const Pipeline* bind_pipeline = nullptr;
     /// gow3 diagnostics (GOW3_DIAG_IMAGES=1, draw pipe off): while a frame capture records, the
