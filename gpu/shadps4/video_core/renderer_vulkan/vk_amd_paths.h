@@ -100,4 +100,20 @@ inline int ManualInterp() {
     return value;
 }
 
+/// gow3: GOW3_LDS_BARRIERS_ALL=1 gives every GPU the LDS barriers only NVIDIA gets
+/// (needs_lds_barriers): without a barrier the driver compiler may reorder one lane's
+/// shared-memory store past another lane's load in a 64-thread compute workgroup, which leaves a
+/// tile of pixels wrong for a frame. Changes the SPIR-V (folded into the shader cache version).
+inline bool LdsBarriersAll() {
+    static const bool on = [] {
+        const char* v = std::getenv("GOW3_LDS_BARRIERS_ALL");
+        const bool enabled = v && v[0] == '1';
+        if (enabled) {
+            std::printf("GPU: LDS barriers on every GPU (GOW3_LDS_BARRIERS_ALL)\n");
+        }
+        return enabled;
+    }();
+    return on;
+}
+
 } // namespace Vulkan::AmdPathsOff
