@@ -1,0 +1,145 @@
+From aa213fc2e3f559ccf63978da9e5c56dacdc0afce Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pape=C5=BE?= <martin.papez@gmail.com>
+Date: Sun, 8 Nov 2026 23:22:26 +0100
+Subject: [PATCH 01/11] shader_recompiler: GCN legacy multiply rule for
+ V_MAD/MAC_LEGACY_F32
+
+V_MAD_LEGACY_F32 and V_MAC_LEGACY_F32 were translated as plain IEEE
+multiply-add, so 0 * Inf produced NaN instead of +0 as on GCN. A NaN in
+lighting/post-processing shows up as single bright coloured pixels that
+blink from frame to frame (seen on RX 7900 XT, RDNA3).
+
+- share the zero rule of V_MUL_LEGACY_F32 (LegacyMul) with MAD/MAC legacy
+- V_RCP_LEGACY_F32: read the sign bit with a bitcast instead of a numeric
+  float->uint conversion (undefined for +-Inf in SPIR-V)
+- ShaderBinaryVersion 8 -> 9 so cached shaders are recompiled
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JF414jy1cdTDi9JXbSh73A
+---
+ .../frontend/translate/translate.h            |  3 ++
+ .../frontend/translate/vector_alu.cpp         | 38 +++++++++++++------
+ .../vk_pipeline_serialization.cpp             |  2 +-
+ 3 files changed, 31 insertions(+), 12 deletions(-)
+
+diff --git a/gpu/shadps4/shader_recompiler/frontend/translate/translate.h b/gpu/shadps4/shader_recompiler/frontend/translate/translate.h
+index bd59bd3..76b5464 100644
+--- a/gpu/shadps4/shader_recompiler/frontend/translate/translate.h
++++ b/gpu/shadps4/shader_recompiler/frontend/translate/translate.h
+@@ -178,6 +178,8 @@ public:
+     void V_OR_B32(bool is_xor, const GcnInst& inst);
+     void V_BFM_B32(const GcnInst& inst);
+     void V_MAC_F32(const GcnInst& inst);
++    void V_MAC_LEGACY_F32(const GcnInst& inst);
++    IR::F32 LegacyMul(const IR::F32& src0, const IR::F32& src1);
+     void V_MADMK_F32(const GcnInst& inst);
+     void V_BCNT_U32_B32(const GcnInst& inst);
+     void V_MBCNT_U32_B32(bool hi, const GcnInst& inst);
+@@ -257,6 +259,7 @@ public:
+ 
+     // VOP3a
+     void V_MAD_F32(const GcnInst& inst);
++    void V_MAD_LEGACY_F32(const GcnInst& inst);
+     void V_MAD_I32_I24(const GcnInst& inst, bool is_signed = true);
+     void V_MAD_U32_U24(const GcnInst& inst);
+     void V_CUBEID_F32(const GcnInst& inst);
+diff --git a/gpu/shadps4/shader_recompiler/frontend/translate/vector_alu.cpp b/gpu/shadps4/shader_recompiler/frontend/translate/vector_alu.cpp
+index 95868c0..6e57767 100644
+--- a/gpu/shadps4/shader_recompiler/frontend/translate/vector_alu.cpp
++++ b/gpu/shadps4/shader_recompiler/frontend/translate/vector_alu.cpp
+@@ -26,7 +26,7 @@ void Translator::EmitVectorAlu(const GcnInst& inst) {
+     case Opcode::V_SUBREV_F32:
+         return V_SUBREV_F32(inst);
+     case Opcode::V_MAC_LEGACY_F32:
+-        return V_MAC_F32(inst);
++        return V_MAC_LEGACY_F32(inst);
+     case Opcode::V_MUL_LEGACY_F32:
+         return V_MUL_LEGACY_F32(inst);
+     case Opcode::V_MUL_F32:
+@@ -436,7 +436,7 @@ void Translator::EmitVectorAlu(const GcnInst& inst) {
+ 
+         // VOP3a
+     case Opcode::V_MAD_LEGACY_F32:
+-        return V_MAD_F32(inst);
++        return V_MAD_LEGACY_F32(inst);
+     case Opcode::V_MAD_F32:
+         return V_MAD_F32(inst);
+     case Opcode::V_MAD_I32_I24:
+@@ -628,14 +628,7 @@ void Translator::V_MUL_F32(const GcnInst& inst) {
+ void Translator::V_MUL_LEGACY_F32(const GcnInst& inst) {
+     // GCN V_MUL_LEGACY_F32: if either source is zero, the result is +0.0
+     // regardless of the other operand (even if NaN or Inf).
+-    // Standard IEEE multiply would produce NaN for 0 * Inf.
+-    const IR::F32 src0{GetSrc<IR::F32>(inst.src[0])};
+-    const IR::F32 src1{GetSrc<IR::F32>(inst.src[1])};
+-    const IR::F32 zero{ir.Imm32(0.0f)};
+-    const IR::U1 src0_zero{ir.FPEqual(src0, zero)};
+-    const IR::U1 src1_zero{ir.FPEqual(src1, zero)};
+-    const IR::U1 either_zero{ir.LogicalOr(src0_zero, src1_zero)};
+-    SetDst(inst.dst[0], IR::F32{ir.Select(either_zero, zero, ir.FPMul(src0, src1))});
++    SetDst(inst.dst[0], LegacyMul(GetSrc<IR::F32>(inst.src[0]), GetSrc<IR::F32>(inst.src[1])));
+ }
+ 
+ void Translator::V_MUL_I32_I24(const GcnInst& inst, bool is_signed) {
+@@ -753,6 +746,21 @@ void Translator::V_MAC_F32(const GcnInst& inst) {
+     SetDst(inst.dst[0], ir.FPAdd(ir.FPMul(src0, src1), dst0));
+ }
+ 
++// gow3: GCN *_LEGACY_F32 multiply rule (DX9): 0 * x = +0 even when x is Inf or NaN. A plain
++// IEEE multiply gives NaN for 0 * Inf, and that NaN ends up as a stray bright pixel.
++IR::F32 Translator::LegacyMul(const IR::F32& src0, const IR::F32& src1) {
++    const IR::F32 zero{ir.Imm32(0.0f)};
++    const IR::U1 either_zero{ir.LogicalOr(ir.FPEqual(src0, zero), ir.FPEqual(src1, zero))};
++    return IR::F32{ir.Select(either_zero, zero, ir.FPMul(src0, src1))};
++}
++
++void Translator::V_MAC_LEGACY_F32(const GcnInst& inst) {
++    const auto src0 = GetSrc<IR::F32>(inst.src[0]);
++    const auto src1 = GetSrc<IR::F32>(inst.src[1]);
++    const auto dst0 = GetSrc<IR::F32>(inst.dst[0]);
++    SetDst(inst.dst[0], ir.FPAdd(LegacyMul(src0, src1), dst0));
++}
++
+ void Translator::V_MADMK_F32(const GcnInst& inst) {
+     const IR::F32 src0{GetSrc<IR::F32>(inst.src[0])};
+     const IR::F32 src1{GetSrc<IR::F32>(inst.src[1])};
+@@ -1077,7 +1085,8 @@ void Translator::V_RCP_LEGACY_F32(const GcnInst& inst) {
+     const auto result = ir.FPRecip(src0);
+     const auto inf = ir.FPIsInf(result);
+ 
+-    const auto raw_result = ir.ConvertFToU(32, result);
++    // gow3: read the sign bit (a numeric FToU of +-Inf is undefined in SPIR-V).
++    const IR::U32 raw_result{ir.BitCast<IR::U32>(IR::F32{result})};
+     const auto sign_bit = ir.ShiftRightLogical(raw_result, ir.Imm32(31u));
+     const auto sign_bit_set = ir.INotEqual(sign_bit, ir.Imm32(0u));
+     const IR::F32 inf_result{ir.Select(sign_bit_set, ir.Imm32(-0.0f), ir.Imm32(0.0f))};
+@@ -1401,6 +1410,13 @@ void Translator::V_MAD_F32(const GcnInst& inst) {
+     SetDst(inst.dst[0], ir.FPAdd(ir.FPMul(src0, src1), src2));
+ }
+ 
++void Translator::V_MAD_LEGACY_F32(const GcnInst& inst) {
++    const IR::F32 src0{GetSrc<IR::F32>(inst.src[0])};
++    const IR::F32 src1{GetSrc<IR::F32>(inst.src[1])};
++    const IR::F32 src2{GetSrc<IR::F32>(inst.src[2])};
++    SetDst(inst.dst[0], ir.FPAdd(LegacyMul(src0, src1), src2));
++}
++
+ void Translator::V_MAD_I32_I24(const GcnInst& inst, bool is_signed) {
+     const IR::U32 src0{
+         ir.BitFieldExtract(GetSrc(inst.src[0]), ir.Imm32(0), ir.Imm32(24), is_signed)};
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+index 4dd33fb..6a22838 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+@@ -36,7 +36,7 @@
+ 
+ namespace Serialization {
+ /* You should increment versions below once corresponding serialization scheme is changed. */
+-static constexpr u32 ShaderBinaryVersion = 8u; // gow3: ps4_core backports BP03/04/05/06 (2026-10-25)
++static constexpr u32 ShaderBinaryVersion = 9u; // gow3: ps4_core backports BP03/04/05/06 (2026-10-25)
+ static constexpr u32 ShaderMetaVersion = 7u; // gow3: ImageResource::needs_native
+ static constexpr u32 PipelineKeyVersion = 5u; // gow3: Info layout (ImageResource::needs_native)
+ } // namespace Serialization
+-- 
+2.56.0.windows.4
+

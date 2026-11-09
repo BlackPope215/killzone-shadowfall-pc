@@ -1,0 +1,47 @@
+From 8e0e5c3d3205517f8498a8537c51b5eada49330f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pape=C5=BE?= <martin.papez@gmail.com>
+Date: Mon, 9 Nov 2026 00:49:08 +0100
+Subject: [PATCH 07/11] shader_recompiler: V_CVT_PKRTZ_F16_F32 never overflows
+ to infinity
+
+V_CVT_PKRTZ_F16_F32 rounds toward zero, so a finite value past the largest half becomes 65504.
+It was translated with packHalf2x16 (round to nearest), which turns it into +-Inf. In Killzone
+Shadow Fall bright HDR values then became infinite on the host, and lighting/TAA spread them as
+single-channel dots (pure red, blue, cyan) that flash while the camera moves (RX 7900 XT).
+
+Clamp finite inputs to +-65504 before packing; Inf and NaN pass through unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JF414jy1cdTDi9JXbSh73A
+---
+ .../frontend/translate/vector_alu.cpp              | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/gpu/shadps4/shader_recompiler/frontend/translate/vector_alu.cpp b/gpu/shadps4/shader_recompiler/frontend/translate/vector_alu.cpp
+index 6e57767..69f7f3b 100644
+--- a/gpu/shadps4/shader_recompiler/frontend/translate/vector_alu.cpp
++++ b/gpu/shadps4/shader_recompiler/frontend/translate/vector_alu.cpp
+@@ -870,8 +870,18 @@ void Translator::V_CVT_PKNORM_I16_F32(const GcnInst& inst) {
+ }
+ 
+ void Translator::V_CVT_PKRTZ_F16_F32(const GcnInst& inst) {
+-    const IR::Value vec_f32 =
+-        ir.CompositeConstruct(GetSrc<IR::F32>(inst.src[0]), GetSrc<IR::F32>(inst.src[1]));
++    // gow3: RTZ (round toward zero) never rounds a finite value up to infinity: anything past
++    // the largest half (65504) becomes 65504. packHalf2x16 rounds to nearest, so bright HDR
++    // values turned into +-Inf on the host and showed up as pure red/green/blue dots once
++    // lighting and TAA spread them (AMD, moving camera). Inf and NaN inputs stay as they are.
++    const auto rtz = [this](const IR::F32& value) {
++        const IR::F32 max_half{ir.Imm32(65504.0f)};
++        const IR::F32 clamped{ir.FPClamp(value, ir.Imm32(-65504.0f), max_half)};
++        const IR::U1 keep{ir.LogicalOr(ir.FPIsNan(value), ir.FPIsInf(value))};
++        return IR::F32{ir.Select(keep, value, clamped)};
++    };
++    const IR::Value vec_f32 = ir.CompositeConstruct(rtz(GetSrc<IR::F32>(inst.src[0])),
++                                                    rtz(GetSrc<IR::F32>(inst.src[1])));
+     SetDst(inst.dst[0], ir.Pack2x16(AmdGpu::NumberFormat::Float, vec_f32));
+ }
+ 
+-- 
+2.56.0.windows.4
+

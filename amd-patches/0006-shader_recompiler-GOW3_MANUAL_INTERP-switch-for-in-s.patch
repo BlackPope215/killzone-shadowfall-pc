@@ -1,0 +1,99 @@
+From c6bb45b440aec59d95e67e253be3e21cee1fdd2e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pape=C5=BE?= <martin.papez@gmail.com>
+Date: Mon, 9 Nov 2026 00:31:34 +0100
+Subject: [PATCH 06/11] shader_recompiler: GOW3_MANUAL_INTERP switch for
+ in-shader interpolation on any GPU
+
+Only NVIDIA interpolates V_INTERP_P1/P2 in the shader from the per-vertex values with the I/J the
+guest computed. Elsewhere the recompiler guesses one qualifier per attribute (center, centroid or
+sample) from the VGPR that held I/J and lets the hardware interpolate, which is wrong when the
+guest edits I/J or interpolates one attribute two ways. Suspected cause of stray coloured dashes
+along triangle edges on AMD (RX 7900 XT).
+
+GOW3_MANUAL_INTERP=1 turns the NVIDIA path on wherever per-vertex inputs exist
+(VK_AMD_shader_explicit_vertex_parameter or VK_KHR_fragment_shader_barycentric), 0 forces the
+hardware path. It is folded into the shader binary cache version.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JF414jy1cdTDi9JXbSh73A
+---
+ .../video_core/renderer_vulkan/vk_amd_paths.h | 19 +++++++++++++++++++
+ .../renderer_vulkan/vk_pipeline_cache.cpp     | 13 +++++++++++--
+ .../vk_pipeline_serialization.cpp             |  2 +-
+ 3 files changed, 31 insertions(+), 3 deletions(-)
+
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_amd_paths.h b/gpu/shadps4/video_core/renderer_vulkan/vk_amd_paths.h
+index bcc8804..a03ff42 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_amd_paths.h
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_amd_paths.h
+@@ -81,4 +81,23 @@ inline Flags Current() {
+     return flags;
+ }
+ 
++/// gow3: GOW3_MANUAL_INTERP=1 interpolates the fragment inputs in the shader from the per-vertex
++/// values, with the I/J the guest code computed (V_INTERP_P1/P2), as on NVIDIA. Without it the
++/// AMD path guesses one qualifier (center/centroid/sample) per attribute from the VGPR holding
++/// I/J and lets the hardware interpolate, which is wrong when the guest edits I/J or uses two
++/// kinds for one attribute (stray colours along triangle edges). 0 forces the hardware path.
++/// -1: not set. Changes the SPIR-V (folded into the shader binary cache version).
++inline int ManualInterp() {
++    static const int value = [] {
++        const char* v = std::getenv("GOW3_MANUAL_INTERP");
++        if (!v || !*v) {
++            return -1;
++        }
++        const int on = v[0] == '1' ? 1 : 0;
++        std::printf("GPU: manual interpolation %s (GOW3_MANUAL_INTERP)\n", on ? "on" : "off");
++        return on;
++    }();
++    return value;
++}
++
+ } // namespace Vulkan::AmdPathsOff
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+index 9c499f4..60a1100 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -35,6 +35,7 @@
+ #include "video_core/renderer_vulkan/motion_history.h"
+ #include "video_core/renderer_vulkan/vk_draw_prep.h"
+ #include "video_core/renderer_vulkan/vk_instance.h"
++#include "video_core/renderer_vulkan/vk_amd_paths.h"
+ #include "video_core/renderer_vulkan/vk_lighting_test.h"
+ #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
+ #include "video_core/renderer_vulkan/vk_scheduler.h"
+@@ -599,8 +600,16 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
+             instance_.IsAmdShaderExplicitVertexParameterSupported(),
+         .supports_fragment_shader_barycentric = instance_.IsFragmentShaderBarycentricSupported(),
+         .supports_shader_subgroup_clock = instance_.IsShaderSubgroupClockSupported(),
+-        .needs_manual_interpolation = instance.IsFragmentShaderBarycentricSupported() &&
+-                                      instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
++        .needs_manual_interpolation = [&] {
++            // gow3: GOW3_MANUAL_INTERP=1 (vk_amd_paths.h) on any GPU with per-vertex inputs.
++            const bool per_vertex = instance.IsFragmentShaderBarycentricSupported() ||
++                                    instance.IsAmdShaderExplicitVertexParameterSupported();
++            if (const int forced = AmdPathsOff::ManualInterp(); forced >= 0) {
++                return forced == 1 && per_vertex;
++            }
++            return instance.IsFragmentShaderBarycentricSupported() &&
++                   instance.GetDriverID() == vk::DriverId::eNvidiaProprietary;
++        }(),
+         // gow3: older NVIDIA (Pascal) has no barycentrics; GOW3_INTERP_INT_FIX=0/1 overrides.
+         .needs_integer_interpolation_fix = [&] {
+             if (const char* env = std::getenv("GOW3_INTERP_INT_FIX")) {
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+index 8701872..c83b0be 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+@@ -54,7 +54,7 @@ u32 CurrentShaderBinaryVersion() {
+                Serialization::ShaderBinaryVersion,
+                LightingTest::ShaderBinarySalt(LightingTest::Current().dref,
+                                               AmdPathsOff::Current().shaderext)) +
+-           64u * Shader::Toggles::ShaderBinarySalt();
++           64u * Shader::Toggles::ShaderBinarySalt() + (AmdPathsOff::ManualInterp() >= 0 ? (1u << 24) * u32(1 + AmdPathsOff::ManualInterp()) : 0u);
+ }
+ } // namespace
+ 
+-- 
+2.56.0.windows.4
+

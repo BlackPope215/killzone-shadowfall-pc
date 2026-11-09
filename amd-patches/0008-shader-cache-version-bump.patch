@@ -1,0 +1,25 @@
+From b075e8ad2d27bff15b249b5456bb140a5954da12 Mon Sep 17 00:00:00 2001
+From: Martin <martin.papez@gmail.com>
+Date: Mon, 9 Nov 2026 00:49:42 +0100
+Subject: [PATCH 08/11] shader cache version bump
+
+---
+ .../video_core/renderer_vulkan/vk_pipeline_serialization.cpp    | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+index c83b0be..eab3b18 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+@@ -36,7 +36,7 @@
+ 
+ namespace Serialization {
+ /* You should increment versions below once corresponding serialization scheme is changed. */
+-static constexpr u32 ShaderBinaryVersion = 11u; // gow3: ps4_core backports BP03/04/05/06 (2026-10-25)
++static constexpr u32 ShaderBinaryVersion = 12u; // gow3: ps4_core backports BP03/04/05/06 (2026-10-25)
+ static constexpr u32 ShaderMetaVersion = 7u; // gow3: ImageResource::needs_native
+ static constexpr u32 PipelineKeyVersion = 5u; // gow3: Info layout (ImageResource::needs_native)
+ } // namespace Serialization
+-- 
+2.56.0.windows.4
+

@@ -1,0 +1,77 @@
+From f4f8034d8bfaac73acaea83d6f1efb838a44e6db Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pape=C5=BE?= <martin.papez@gmail.com>
+Date: Mon, 9 Nov 2026 01:15:30 +0100
+Subject: [PATCH 11/11] shader_recompiler: GOW3_LDS_BARRIERS_ALL switch for LDS
+ barriers on any GPU
+
+Only NVIDIA (and KosmicKrisp) get barriers between shared-memory accesses of a 64-thread compute
+workgroup (needs_lds_barriers). Elsewhere the recompiled shader relies on the wave running in
+lockstep, but without a barrier the driver compiler may reorder one lane's LDS store past another
+lane's load, leaving a tile of pixels wrong for one frame. Suspected cause of single-frame
+coloured blocks on AMD (RX 7900 XT).
+
+GOW3_LDS_BARRIERS_ALL=1 turns the barriers on for every GPU; folded into the shader cache version.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JF414jy1cdTDi9JXbSh73A
+---
+ .../video_core/renderer_vulkan/vk_amd_paths.h    | 16 ++++++++++++++++
+ .../renderer_vulkan/vk_pipeline_cache.cpp        |  3 ++-
+ .../vk_pipeline_serialization.cpp                |  2 +-
+ 3 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_amd_paths.h b/gpu/shadps4/video_core/renderer_vulkan/vk_amd_paths.h
+index a03ff42..c0435e7 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_amd_paths.h
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_amd_paths.h
+@@ -100,4 +100,20 @@ inline int ManualInterp() {
+     return value;
+ }
+ 
++/// gow3: GOW3_LDS_BARRIERS_ALL=1 gives every GPU the LDS barriers only NVIDIA gets
++/// (needs_lds_barriers): without a barrier the driver compiler may reorder one lane's
++/// shared-memory store past another lane's load in a 64-thread compute workgroup, which leaves a
++/// tile of pixels wrong for a frame. Changes the SPIR-V (folded into the shader cache version).
++inline bool LdsBarriersAll() {
++    static const bool on = [] {
++        const char* v = std::getenv("GOW3_LDS_BARRIERS_ALL");
++        const bool enabled = v && v[0] == '1';
++        if (enabled) {
++            std::printf("GPU: LDS barriers on every GPU (GOW3_LDS_BARRIERS_ALL)\n");
++        }
++        return enabled;
++    }();
++    return on;
++}
++
+ } // namespace Vulkan::AmdPathsOff
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+index 60a1100..59687ed 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -618,7 +618,8 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
+             return !instance.IsFragmentShaderBarycentricSupported() &&
+                    instance.GetDriverID() == vk::DriverId::eNvidiaProprietary;
+         }(),
+-        .needs_lds_barriers = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
++        .needs_lds_barriers = AmdPathsOff::LdsBarriersAll() ||
++                              instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
+                               instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
+         .needs_buffer_offsets = instance.StorageMinAlignment() > 4,
+         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
+diff --git a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+index 02bfbdd..b90f794 100644
+--- a/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
++++ b/gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+@@ -54,7 +54,7 @@ u32 CurrentShaderBinaryVersion() {
+                Serialization::ShaderBinaryVersion,
+                LightingTest::ShaderBinarySalt(LightingTest::Current().dref,
+                                               AmdPathsOff::Current().shaderext)) +
+-           64u * Shader::Toggles::ShaderBinarySalt() + (AmdPathsOff::ManualInterp() >= 0 ? (1u << 24) * u32(1 + AmdPathsOff::ManualInterp()) : 0u);
++           64u * Shader::Toggles::ShaderBinarySalt() + (AmdPathsOff::ManualInterp() >= 0 ? (1u << 24) * u32(1 + AmdPathsOff::ManualInterp()) : 0u) + (AmdPathsOff::LdsBarriersAll() ? (1u << 27) : 0u);
+ }
+ } // namespace
+ 
+-- 
+2.56.0.windows.4
+
