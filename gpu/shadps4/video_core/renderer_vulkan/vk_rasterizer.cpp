@@ -252,8 +252,16 @@ void Rasterizer::SnapshotFeedbackTextures(const GraphicsPipeline* pipeline) {
                 const auto id = cb_descs[cb].first;
                 if (id && texture_cache.GetImage(id).binding.is_bound &&
                     seen.insert(ps->pgm_hash).second) {
-                    LOG_INFO(Render_Vulkan, "gow3: feedback-loop draw without snapshot: ps {:#010x}",
-                             static_cast<u32>(ps->pgm_hash));
+                    // printf: game.log keeps the port's own lines, not LOG_INFO.
+                    std::printf("GPU: feedback-loop draw without snapshot: ps %08x vs %08x target %u "
+                                "%s %ux%u\n",
+                                static_cast<u32>(ps->pgm_hash),
+                                static_cast<u32>(
+                                    pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash),
+                                cb, vk::to_string(texture_cache.GetImage(id).info.pixel_format).c_str(),
+                                texture_cache.GetImage(id).info.size.width,
+                                texture_cache.GetImage(id).info.size.height);
+                    std::fflush(stdout);
                 }
             }
         }
@@ -318,10 +326,9 @@ void Rasterizer::SnapshotFeedbackTextures(const GraphicsPipeline* pipeline) {
                 snap->image.Create(ci);
                 static u32 reported = 0;
                 if (reported++ < 16) {
-                    LOG_INFO(Render_Vulkan,
-                             "gow3: feedback-loop snapshot for ps {:#010x}: {} {}x{} target",
-                             static_cast<u32>(ps->pgm_hash), vk::to_string(src_ci.format),
-                             src_ci.extent.width, src_ci.extent.height);
+                    std::printf("GPU: feedback-loop snapshot for ps %08x: %s %ux%u target\n",
+                                static_cast<u32>(ps->pgm_hash), vk::to_string(src_ci.format).c_str(),
+                                src_ci.extent.width, src_ci.extent.height);
                 }
             }
             vk::ImageView snap_view{};
