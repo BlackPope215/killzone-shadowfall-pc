@@ -242,7 +242,7 @@ void Rasterizer::SnapshotFeedbackTextures(const GraphicsPipeline* pipeline) {
     if (!ps) {
         return;
     }
-    if (!FeedbackCopy::Wanted(ps->pgm_hash)) {
+    if (!FeedbackCopy::Wanted(ps->pgm_hash, pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash)) {
         // GOW3_FB_LOG=1: name each pixel shader that samples its own targets without a
         // snapshot (candidates when artifacts remain), once per shader.
         static const bool log_on = std::getenv("GOW3_FB_LOG") != nullptr;
