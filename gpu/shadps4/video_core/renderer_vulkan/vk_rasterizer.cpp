@@ -239,8 +239,34 @@ Rasterizer::~Rasterizer() = default;
 
 void Rasterizer::SnapshotFeedbackTextures(const GraphicsPipeline* pipeline) {
     const auto* ps = pipeline->GetStages()[static_cast<u32>(Shader::SwStage::Fragment)];
-    if (!ps || !FeedbackCopy::Wanted(ps->pgm_hash)) {
+    if (!ps) {
         return;
+    }
+    if (!FeedbackCopy::Wanted(ps->pgm_hash)) {
+        // GOW3_FB_LOG=1: name each pixel shader that samples its own targets without a
+        // snapshot (candidates when artifacts remain), once per shader.
+        static const bool log_on = std::getenv("GOW3_FB_LOG") != nullptr;
+        if (log_on) {
+            static std::unordered_set<u64> seen;
+            for (u32 cb = 0; cb < cb_descs.size(); ++cb) {
+                const auto id = cb_descs[cb].first;
+                if (id && texture_cache.GetImage(id).binding.is_bound &&
+                    seen.insert(ps->pgm_hash).second) {
+                    LOG_INFO(Render_Vulkan, "gow3: feedback-loop draw without snapshot: ps {:#010x}",
+                             static_cast<u32>(ps->pgm_hash));
+                }
+            }
+        }
+        return;
+    }
+    // Snapshots of images that no longer exist: drop them all once the table grows (they are
+    // recreated on use). Destruction waits for the commands that still read them.
+    if (feedback_snapshots.size() > 32) {
+        for (auto& [uid, old] : feedback_snapshots) {
+            scheduler.DeferOperation(
+                [keep = std::shared_ptr<FeedbackSnapshot>(std::move(old))] {});
+        }
+        feedback_snapshots.clear();
     }
     const auto feedback_layout = instance.IsAttachmentFeedbackLoopLayoutSupported()
                                      ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
@@ -278,7 +304,8 @@ void Rasterizer::SnapshotFeedbackTextures(const GraphicsPipeline* pipeline) {
                          snap->image.image_ci.format != src_ci.format ||
                          snap->image.image_ci.mipLevels != src_ci.mipLevels ||
                          snap->image.image_ci.arrayLayers != src_ci.arrayLayers)) {
-                snap.reset();
+                scheduler.DeferOperation(
+                    [keep = std::shared_ptr<FeedbackSnapshot>(std::move(snap))] {});
             }
             if (!snap) {
                 snap = std::make_unique<FeedbackSnapshot>();
