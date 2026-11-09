@@ -54,7 +54,7 @@ u32 CurrentShaderBinaryVersion() {
                Serialization::ShaderBinaryVersion,
                LightingTest::ShaderBinarySalt(LightingTest::Current().dref,
                                               AmdPathsOff::Current().shaderext)) +
-           64u * Shader::Toggles::ShaderBinarySalt() + (AmdPathsOff::ManualInterp() >= 0 ? (1u << 24) * u32(1 + AmdPathsOff::ManualInterp()) : 0u);
+           64u * Shader::Toggles::ShaderBinarySalt() + (AmdPathsOff::ManualInterp() >= 0 ? (1u << 24) * u32(1 + AmdPathsOff::ManualInterp()) : 0u) + (AmdPathsOff::LdsBarriersAll() ? (1u << 27) : 0u);
 }
 } // namespace
 
