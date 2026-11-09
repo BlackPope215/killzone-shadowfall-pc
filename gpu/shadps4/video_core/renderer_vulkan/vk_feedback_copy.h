@@ -10,7 +10,8 @@
 //
 // GOW3_FB_COPY unset: snapshot for the pixel shaders known to need it (DefaultHashes).
 // GOW3_FB_COPY=0 / off: never.  GOW3_FB_COPY=all: every feedback-loop draw.
-// GOW3_FB_COPY=<hex hashes>: these pixel shaders (lower 32 bits, as the frame analyzer prints).
+// GOW3_FB_COPY=<hex hashes>: draws whose pixel OR vertex shader is listed (lower 32 bits, as the
+// frame analyzer prints).
 #pragma once
 
 #include <cctype>
@@ -27,6 +28,8 @@ namespace Vulkan::FeedbackCopy {
 /// Pixel shaders found to need a snapshot (bisected with GOW3_SKIP_FILE on an RX 7900 XT).
 inline constexpr u32 DefaultHashes[] = {
     0x53ee1598, // decal box writing all five G-buffer targets (bedroom lamp, frame pass #62)
+    0xf82bd030, // the decal box VERTEX shader: every pixel shader variant drawn with it
+                // (53ee1598 in the prologue, 383d5b48 in the next chapter, ...)
 };
 
 struct Config {
@@ -67,15 +70,17 @@ inline const Config& Get() {
             }
             flush();
         }
-        std::printf("GPU: feedback-loop snapshots for %zu pixel shader(s)\n", c.hashes.size());
+        std::printf("GPU: feedback-loop snapshots for %zu shader hash(es)\n", c.hashes.size());
         return c;
     }();
     return config;
 }
 
-inline bool Wanted(u64 ps_hash) {
+/// A hash in the list matches the draw's pixel shader or its vertex shader.
+inline bool Wanted(u64 ps_hash, u64 vs_hash = 0) {
     const auto& c = Get();
-    return c.all || (!c.hashes.empty() && c.hashes.contains(static_cast<u32>(ps_hash)));
+    return c.all || (!c.hashes.empty() && (c.hashes.contains(static_cast<u32>(ps_hash)) ||
+                                           c.hashes.contains(static_cast<u32>(vs_hash))));
 }
 
 } // namespace Vulkan::FeedbackCopy
