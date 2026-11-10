@@ -1113,7 +1113,11 @@ bool Rasterizer::JitterScope(const GraphicsPipeline* pipeline, const AmdGpu::Reg
             std::printf("Upscaler: jitter for every scene draw but the G-buffer "
                         "(GOW3_JITTER_SCOPE=nogbuffer)\n");
         }
-        return (c == 'o' || c == 'g' || c == 'n') ? c : char(0);
+        if (c == 'q') {
+            std::printf("Upscaler: G-buffer quads (6 indices or fewer) not jittered "
+                        "(GOW3_JITTER_SCOPE=quads)\n");
+        }
+        return (c == 'o' || c == 'g' || c == 'n' || c == 'q') ? c : char(0);
     }();
     const bool opaque_only = scope == 'o';
     static const std::vector<u64> skip = [] {
@@ -1145,6 +1149,22 @@ bool Rasterizer::JitterScope(const GraphicsPipeline* pipeline, const AmdGpu::Reg
             return u32(h) == u32(vs) || u32(h) == u32(ps);
         }) != skip.end()) {
         return false;
+    }
+    // Killzone draws small 6-index quads into the G-buffer; screen-space ones would leave an
+    // unwritten edge when shifted.
+    const bool gbuffer_quad = gbuffer && indices != 0 && indices <= 6 && instances <= 1;
+    if (gbuffer_quad && log) {
+        static std::unordered_set<u64> seen_quads;
+        static std::mutex quads_mutex;
+        std::scoped_lock lock{quads_mutex};
+        if (seen_quads.size() < 200 && seen_quads.insert((vs << 32) ^ u32(ps)).second) {
+            std::printf("Upscaler: G-buffer quad: vs %08x ps %08x, %u indices, depth write %u%s\n",
+                        u32(vs), u32(ps), indices, u32(regs.depth_control.depth_write_enable),
+                        scope == 'q' ? ", not jittered" : "");
+        }
+    }
+    if (scope == 'q') {
+        return !gbuffer_quad;
     }
     if (scope == 'g') {
         return gbuffer;
