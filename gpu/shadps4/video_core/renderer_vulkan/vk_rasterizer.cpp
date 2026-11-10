@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <mutex>
 #include <unordered_set>
@@ -1162,6 +1163,30 @@ bool Rasterizer::JitterScope(const GraphicsPipeline* pipeline, const AmdGpu::Reg
                         u32(vs), u32(ps), indices, u32(regs.depth_control.depth_write_enable),
                         scope == 'q' ? ", not jittered" : "");
         }
+    }
+    // GOW3_JITTER_BISECT=<mask>:<value> (hex): G-buffer draws whose pixel shader hash has
+    // (hash & mask) == value are not jittered; halving the set finds the shader that matters.
+    static const std::array<u32, 2> bisect = [] {
+        std::array<u32, 2> mv{0, 0xffffffffu};
+        if (const char* env = std::getenv("GOW3_JITTER_BISECT")) {
+            unsigned m = 0, v = 0;
+            if (std::sscanf(env, "%x:%x", &m, &v) == 2 && m) {
+                mv = {m, v & m};
+                std::printf("Upscaler: G-buffer draws with pixel shader hash & %x == %x not "
+                            "jittered (GOW3_JITTER_BISECT)\n", m, v & m);
+            }
+        }
+        return mv;
+    }();
+    if (gbuffer && bisect[0] && (u32(ps) & bisect[0]) == bisect[1]) {
+        static std::unordered_set<u32> seen_bisect;
+        static std::mutex bisect_mutex;
+        std::scoped_lock lock{bisect_mutex};
+        if (seen_bisect.size() < 300 && seen_bisect.insert(u32(ps)).second) {
+            std::printf("Upscaler: bisect: G-buffer ps %08x (vs %08x) not jittered, %zu so far\n",
+                        u32(ps), u32(vs), seen_bisect.size());
+        }
+        return false;
     }
     if (scope == 'q') {
         return !gbuffer_quad;
