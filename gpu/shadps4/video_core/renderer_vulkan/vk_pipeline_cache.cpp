@@ -327,6 +327,50 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
     return info;
 }
 
+namespace {
+// gow3: GOW3_GS_FEATURES (geometry draws with stream out or an on-chip GS, skipped by default).
+// Every skipped or let-through combination is printed once: on-chip mode, stream out enables,
+// rasterized stream and its mask, buffer enables.
+//   mask: draws whose stream-out register only carries the rasterizer stream fields (no stream
+//         enabled) are drawn; the register being non-zero is not stream out.
+//   draw: also draws with stream out enabled that rasterize stream 0, without writing the
+//         stream-out buffers (what a later pass reads from them stays empty).
+// On-chip GS draws stay skipped (the ES to GS data path differs).
+bool GsFeaturesAllowed(const AmdGpu::Regs& regs) {
+    static const int mode = [] {
+        const char* env = std::getenv("GOW3_GS_FEATURES");
+        const int m = !env ? 0 : env[0] == 'm' ? 1 : env[0] == 'd' ? 2 : 0;
+        if (m) {
+            std::printf("GPU: geometry draws with stream-out registers: %s (GOW3_GS_FEATURES)\n",
+                        m == 1 ? "drawn when no stream is enabled"
+                               : "drawn, stream-out buffers not written");
+        }
+        return m;
+    }();
+    const auto& so = regs.vgt_strmout_config;
+    const u32 enabled = so.streamout_0_en | (so.streamout_1_en << 1) | (so.streamout_2_en << 2) |
+                        (so.streamout_3_en << 3);
+    const bool onchip = regs.vgt_gs_mode.onchip != 0;
+    const bool allowed = !onchip && (enabled == 0 ? mode >= 1 : mode >= 2 && so.rast_stream == 0);
+    static std::mutex seen_mutex;
+    static std::unordered_set<u64> seen;
+    const u64 key = (u64(so.raw) << 32) | (u64(onchip) << 31) |
+                    u64(*reinterpret_cast<const u16*>(&regs.vgt_strmout_buffer_config)) | (u64(allowed) << 30);
+    {
+        std::scoped_lock lock{seen_mutex};
+        if (seen.size() < 64 && seen.insert(key).second) {
+            std::printf("GPU: geometry draw with on-chip GS %u, stream out enabled %x, rasterized "
+                        "stream %u (mask %x, use mask %u), buffer config %04x: %s\n",
+                        u32(regs.vgt_gs_mode.onchip), enabled, u32(so.rast_stream),
+                        u32(so.rast_stream_mask), u32(so.use_rast_stream_mask),
+                        u32(*reinterpret_cast<const u16*>(&regs.vgt_strmout_buffer_config)),
+                        allowed ? "drawn" : "skipped");
+        }
+    }
+    return allowed;
+}
+} // namespace
+
 // gow3 (iss_pc BP08, from Mrsuss b972798 and 0xCydral bdb9769): the driver's own pipeline cache
 // (the compiled ISA behind every vkCreate*Pipelines) is kept between sessions in
 // <cache>/driver-<serial>/vk_pipeline_cache_<vendor>_<device>_<pipelineCacheUUID>.vkc. The key
@@ -1369,7 +1413,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
             LOG_WARNING(Render_Vulkan, "Geometry shader stage unsupported, skipping");
             { g_gow3_fail_line = __LINE__; return false; }
         }
-        if (regs.vgt_gs_mode.onchip || regs.vgt_strmout_config.raw) {
+        if ((regs.vgt_gs_mode.onchip || regs.vgt_strmout_config.raw) && !GsFeaturesAllowed(regs)) {
             LOG_WARNING(Render_Vulkan, "Geometry shader features unsupported, skipping");
             { g_gow3_fail_line = __LINE__; return false; }
         }
@@ -1402,7 +1446,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
             LOG_WARNING(Render_Vulkan, "Geometry shader stage unsupported, skipping");
             { g_gow3_fail_line = __LINE__; return false; }
         }
-        if (regs.vgt_gs_mode.onchip || regs.vgt_strmout_config.raw) {
+        if ((regs.vgt_gs_mode.onchip || regs.vgt_strmout_config.raw) && !GsFeaturesAllowed(regs)) {
             LOG_WARNING(Render_Vulkan, "Geometry shader features unsupported, skipping");
             { g_gow3_fail_line = __LINE__; return false; }
         }
