@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cctype>
 #include <mutex>
 #include <unordered_set>
 #include <vector>
@@ -1098,15 +1099,23 @@ bool Rasterizer::RunInOrder(OrderedTask task, const void* data, u32 size, u64 to
 // shader pair).
 bool Rasterizer::JitterScope(const GraphicsPipeline* pipeline, const AmdGpu::Regs& regs,
                              bool gbuffer, u32 indices, u32 instances) {
-    static const bool opaque_only = [] {
+    // 'o'paque: G-buffer + depth-writing draws; 'g'buffer: G-buffer draws only; 'n'on-gbuffer:
+    // everything but the G-buffer draws (depth pre-pass, effects).
+    static const char scope = [] {
         const char* env = std::getenv("GOW3_JITTER_SCOPE");
-        const bool on = env && (env[0] == 'o' || env[0] == 'O');
-        if (on) {
+        const char c = env ? char(std::tolower(static_cast<unsigned char>(env[0]))) : 0;
+        if (c == 'o') {
             std::printf("Upscaler: jitter only for the G-buffer and depth-writing draws "
                         "(GOW3_JITTER_SCOPE=opaque)\n");
+        } else if (c == 'g') {
+            std::printf("Upscaler: jitter only for the G-buffer draws (GOW3_JITTER_SCOPE=gbuffer)\n");
+        } else if (c == 'n') {
+            std::printf("Upscaler: jitter for every scene draw but the G-buffer "
+                        "(GOW3_JITTER_SCOPE=nogbuffer)\n");
         }
-        return on;
+        return (c == 'o' || c == 'g' || c == 'n') ? c : char(0);
     }();
+    const bool opaque_only = scope == 'o';
     static const std::vector<u64> skip = [] {
         std::vector<u64> list;
         if (const char* env = std::getenv("GOW3_JITTER_SKIP")) {
@@ -1136,6 +1145,12 @@ bool Rasterizer::JitterScope(const GraphicsPipeline* pipeline, const AmdGpu::Reg
             return u32(h) == u32(vs) || u32(h) == u32(ps);
         }) != skip.end()) {
         return false;
+    }
+    if (scope == 'g') {
+        return gbuffer;
+    }
+    if (scope == 'n') {
+        return !gbuffer;
     }
     const bool writes_depth =
         regs.depth_control.depth_enable && regs.depth_control.depth_write_enable;
