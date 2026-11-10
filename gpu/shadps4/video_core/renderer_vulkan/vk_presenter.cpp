@@ -1082,6 +1082,13 @@ void Presenter::PresentLoadingFrame() {
     present_scheduler.Finish();
 }
 
+void Presenter::ReleaseFrame(Frame* frame) {
+    draw_scheduler.GetWorkSemaphore()->Wait(frame->ready_tick);
+    std::scoped_lock fl{free_mutex};
+    free_queue.push(frame);
+    free_cv.notify_one();
+}
+
 void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame) {
     // Free the frame for reuse
     const auto free_frame = [&] {
