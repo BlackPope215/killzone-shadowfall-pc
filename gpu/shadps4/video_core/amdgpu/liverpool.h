@@ -243,6 +243,8 @@ private:
     VAddr indirect_args_addr{};
     u32 num_counter_pairs{};
     u64 pixel_counter{};
+    /// gow3: GOW3_OCCLUSION=real (liverpool.cpp).
+    void OcclusionGuestWrite(VAddr addr);
 
     struct ConstantEngine {
         void Reset() {

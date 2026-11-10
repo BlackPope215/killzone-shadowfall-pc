@@ -1088,6 +1088,32 @@ bool Rasterizer::RunInOrder(OrderedTask task, const void* data, u32 size, u64 to
     return true;
 }
 
+void Rasterizer::OcclusionEvent(u32 kind, VAddr addr, u32 op, bool draw_visible) {
+    struct Event {
+        VAddr addr;
+        u32 kind;
+        u32 op;
+        u32 draw_visible;
+    };
+    const Event event{addr, kind, op, draw_visible ? 1u : 0u};
+    RunInOrder(
+        [](Rasterizer& self, const u8* data) {
+            Event e;
+            std::memcpy(&e, data, sizeof(e));
+            auto& occ = self.occlusion;
+            if (!occ.Init(self.instance.GetDevice(), self.instance.IsHostQueryResetSupported())) {
+                return;
+            }
+            occ.Collect([&](u64 tick) { return self.scheduler.IsFree(tick); });
+            if (e.kind == 0) {
+                occ.OnZpass(e.addr, self.scheduler.CurrentTick());
+            } else {
+                occ.SetPredicate(e.addr, e.op, e.draw_visible != 0);
+            }
+        },
+        &event, sizeof(event));
+}
+
 void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
     auto& self = *static_cast<Rasterizer*>(context);
     if (*reinterpret_cast<const PacketKind*>(data) == PacketKind::Task) {
@@ -1583,7 +1609,16 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     const u32 first_instance = instance_offset;
     // gow3: GOW3_SKIP_FILE (vk_shader_skip.h) drops listed shaders to bisect an artifact.
     const auto* skip_ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
-    const bool skip_draw = ShaderSkip::Skip(vs_info.pgm_hash, skip_ps ? skip_ps->pgm_hash : 0);
+    bool skip_draw = ShaderSkip::Skip(vs_info.pgm_hash, skip_ps ? skip_ps->pgm_hash : 0);
+    // gow3: GOW3_OCCLUSION=real (vk_occlusion.h): occlusion test draws run in a query, and a
+    // predicated draw whose test found nothing visible is dropped.
+    s32 query = -1;
+    vk::QueryPool query_pool{};
+    if (OcclusionQueries::Enabled() && !skip_draw) {
+        skip_draw = occlusion.SkipDraw();
+        query = skip_draw ? -1 : occlusion.QueryForDraw();
+        query_pool = occlusion.Pool();
+    }
     if (!skip_draw) scheduler.Record([=](vk::CommandBuffer cmdbuf) {
         const auto draw = [&] {
             if (is_indexed) {
@@ -1593,11 +1628,17 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                 cmdbuf.draw(num_indices, num_instances, first_vertex, first_instance);
             }
         };
+        if (query >= 0) {
+            cmdbuf.beginQuery(query_pool, u32(query), {});
+        }
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
         draw();
         if (square) [[unlikely]] {
             cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, square);
             draw();
+        }
+        if (query >= 0) {
+            cmdbuf.endQuery(query_pool, u32(query));
         }
     });
     if (FrameCapture::Active()) {
@@ -1721,7 +1762,23 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     const u64 args_offset = base;
     const vk::Buffer counts = count_address != 0 ? count_buffer->Handle() : vk::Buffer{};
     const u64 counts_offset = count_address != 0 ? count_offset : 0;
+    // gow3: GOW3_OCCLUSION=real, as in DrawRecord.
+    s32 query = -1;
+    vk::QueryPool query_pool{};
+    if (OcclusionQueries::Enabled()) {
+        if (occlusion.SkipDraw()) {
+            DebugState.IncDrawCall();
+            ResetBindings(false);
+            scheduler.KickRecording();
+            return;
+        }
+        query = occlusion.QueryForDraw();
+        query_pool = occlusion.Pool();
+    }
     scheduler.Record([=](vk::CommandBuffer cmdbuf) {
+        if (query >= 0) {
+            cmdbuf.beginQuery(query_pool, u32(query), {});
+        }
         for (const vk::Pipeline bound : {handle, square}) {
             if (!bound) {
                 break;
@@ -1739,6 +1796,9 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
             } else {
                 cmdbuf.drawIndirect(args, args_offset, max_count, stride);
             }
+        }
+        if (query >= 0) {
+            cmdbuf.endQuery(query_pool, u32(query));
         }
     });
     DebugState.IncDrawCall();

@@ -260,6 +260,11 @@ public:
         return vk12_features.shaderBufferInt64Atomics;
     }
 
+    /// gow3: queries can be reset from the CPU (GOW3_OCCLUSION=real).
+    bool IsHostQueryResetSupported() const {
+        return vk12_features.hostQueryReset;
+    }
+
     /// Returns true if 64-bit integer atomic operations can be used on shared memory
     bool IsSharedInt64AtomicsSupported() const {
         return vk12_features.shaderSharedInt64Atomics;

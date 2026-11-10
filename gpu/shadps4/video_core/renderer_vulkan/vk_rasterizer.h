@@ -14,6 +14,7 @@
 #include "video_core/renderer_vulkan/vk_object_motion.h"
 #include "video_core/renderer_vulkan/vk_draw_pipe.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
+#include "video_core/renderer_vulkan/vk_occlusion.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -178,6 +179,14 @@ public:
 #if defined(__linux__) || defined(_WIN32)
     u32 GetGpuCommandProcessorThreadId();
 #endif
+
+    /// gow3: GOW3_OCCLUSION=real (vk_occlusion.h), stage A: a ZPASS_DONE event at `addr`
+    /// (kind 0) or SET_PREDICATION (kind 1, `op` 0 clear / 1 ZPASS), in order with the draws.
+    void OcclusionEvent(u32 kind, VAddr addr, u32 op = 0, bool draw_visible = true);
+    /// Any thread: the last finished occlusion result for a test at `addr`.
+    bool OcclusionLookup(VAddr addr, u64& visible) {
+        return occlusion.Lookup(addr, visible);
+    }
 
 private:
     void PrepareRenderState(const GraphicsPipeline* pipeline);
@@ -394,6 +403,8 @@ private:
     boost::container::static_vector<VideoCore::ImageId, MaxDrawImages> bound_images;
     struct FeedbackSnapshot;
     std::unordered_map<u64, std::unique_ptr<FeedbackSnapshot>> feedback_snapshots;
+    /// gow3: GOW3_OCCLUSION=real; used on the draw recording thread.
+    OcclusionQueries occlusion;
     /// The pipeline BindResources is binding (OnCommandFailed's log), else null.
     const Pipeline* bind_pipeline = nullptr;
     /// gow3 diagnostics (GOW3_DIAG_IMAGES=1, draw pipe off): while a frame capture records, the
