@@ -26,8 +26,15 @@ CopyShaderData ParseCopyShader(std::span<const u32> code) {
         auto inst = decoder.decodeInstruction(code_slice);
         switch (inst.opcode) {
         case Gcn::Opcode::S_LSHL_B32: {
-            ASSERT(inst.src[0].field == Gcn::OperandField::SignedConstIntPos &&
-                   inst.src[1].field == Gcn::OperandField::SignedConstIntPos);
+            // gow3: a copy shader with stream out (Killzone) shifts register values too (the
+            // stream-out write offsets); those are not attribute offsets: unknown, not fatal.
+            if (inst.src[0].field != Gcn::OperandField::SignedConstIntPos ||
+                inst.src[1].field != Gcn::OperandField::SignedConstIntPos) {
+                if (inst.dst[0].code < sources.size()) {
+                    sources[inst.dst[0].code] = -1;
+                }
+                break;
+            }
             sources[inst.dst[0].code] =
                 (inst.src[0].code - Gcn::OperandFieldRange::SignedConstIntPosMin + 1)
                 << (inst.src[1].code - Gcn::OperandFieldRange::SignedConstIntPosMin + 1);
@@ -42,12 +49,20 @@ CopyShaderData ParseCopyShader(std::span<const u32> code) {
             break;
         }
         case Gcn::Opcode::S_ADDK_I32: {
+            if (sources[inst.dst[0].code] == -1) {
+                break; // gow3: unknown stays unknown
+            }
             sources[inst.dst[0].code] += inst.control.sopk.simm;
             break;
         }
         case Gcn::Opcode::S_BFM_B32: {
-            ASSERT(inst.src[0].field == Gcn::OperandField::SignedConstIntPos &&
-                   inst.src[1].field == Gcn::OperandField::SignedConstIntPos);
+            if (inst.src[0].field != Gcn::OperandField::SignedConstIntPos ||
+                inst.src[1].field != Gcn::OperandField::SignedConstIntPos) {
+                if (inst.dst[0].code < sources.size()) {
+                    sources[inst.dst[0].code] = -1; // gow3: as S_LSHL_B32 above
+                }
+                break;
+            }
             const auto src0 = inst.src[0].code - Gcn::OperandFieldRange::SignedConstIntPosMin + 1;
             const auto src1 = inst.src[1].code - Gcn::OperandFieldRange::SignedConstIntPosMin + 1;
             sources[inst.dst[0].code] = ((1 << src0) - 1) << src1;
@@ -76,7 +91,12 @@ CopyShaderData ParseCopyShader(std::span<const u32> code) {
             offsets[inst.src[1].code] = inst.control.mubuf.offset;
             if (inst.src[3].field != Gcn::OperandField::ConstZero) {
                 const u32 index = inst.src[3].code;
-                ASSERT(sources[index] != -1);
+                if (index >= sources.size() || sources[index] == -1) {
+                    // gow3: an offset from a register the parser cannot follow (stream-out
+                    // copy shaders): the loaded value is not mapped to an attribute.
+                    offsets[inst.src[1].code] = -1;
+                    break;
+                }
                 offsets[inst.src[1].code] += sources[index];
             }
             data.num_comps++;
