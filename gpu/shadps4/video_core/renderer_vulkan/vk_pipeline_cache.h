@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
+#include <optional>
 
 #include <functional>
 #include <unordered_map>
@@ -55,6 +56,14 @@ struct Program {
     Shader::Info info;
     ModuleList modules{};
     size_t last_used = 0; ///< gow3: permutation of the previous lookup, compared first
+    /// gow3: GOW3_SPEC_REUSE: the inputs of the last matched lookup (flattened user data,
+    /// runtime info, binding start). The specialization is a function of them, so the same
+    /// inputs select the same permutation without building and comparing a specialization.
+    std::vector<u32> reuse_flat;
+    std::optional<Shader::RuntimeInfo> reuse_runtime;
+    Shader::Backend::Bindings reuse_binding{};
+    size_t reuse_idx = ~size_t{0};
+    vk::ShaderModule reuse_module{};
     /// gow3: `info` as translated, for draw-preparation workers (they must not read `info`,
     /// whose user data the GPU thread rewrites every draw). Guarded by programs_mutex.
     std::unique_ptr<Shader::Info> info_template;
