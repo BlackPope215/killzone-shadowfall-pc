@@ -194,6 +194,10 @@ private:
     /// gow3: GOW3_FB_COPY (vk_feedback_copy.h): the draw samples copies of the targets it
     /// also draws into. Call after BindResources, before BeginRendering.
     void SnapshotFeedbackTextures(const GraphicsPipeline* pipeline);
+    /// gow3: GOW3_JITTER_SCOPE / GOW3_JITTER_SKIP / GOW3_JITTER_LOG: whether a scene-depth
+    /// draw gets the upscaler's jitter.
+    bool JitterScope(const GraphicsPipeline* pipeline, const AmdGpu::Regs& regs, bool gbuffer,
+                     u32 indices, u32 instances);
     RenderState BeginRenderingFull(const GraphicsPipeline* pipeline);
     /// gow3: a draw continuing the open render pass with the same inputs gets the same render
     /// state (RenderStateMemo); nothing can have broken the pass in between (barriers, copies and
