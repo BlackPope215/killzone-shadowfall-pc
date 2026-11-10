@@ -243,6 +243,8 @@ private:
     VAddr indirect_args_addr{};
     u32 num_counter_pairs{};
     u64 pixel_counter{};
+    /// gow3: IT_STRMOUT_BUFFER_UPDATE: the four stream-out buffer offsets, bytes.
+    std::array<u32, 4> streamout_offsets{};
     /// gow3: GOW3_OCCLUSION=real (liverpool.cpp).
     void OcclusionGuestWrite(VAddr addr);
 
