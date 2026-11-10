@@ -285,9 +285,22 @@ ABI void gow3_mouse_look_adjust(float *x, float *y) {
  * turns and the accelerations (+0x10, +0x20) ramp a stick up to them: a mouse flick hits both.
  * For 0.3 s after the mouse last moved, speeds are raised by the "fast turns" setting (6x) and
  * accelerations by that times GOW3_MOUSE_DIRECT_ACCEL (50x); a gamepad keeps the game's own. */
+/* GOW3_PAD_TURN_ACCEL (default 1 = the game's own): with the controller, the accelerations are
+ * multiplied by it, so the right stick reaches its turn speed sooner ("heavy" turning gets
+ * lighter; 3 to 6 is a lot). GOW3_PAD_TURN_SPEED (default 1) scales the top turn speeds too. */
+static float pad_turn_factor(const char *name) {
+    const char *v=getenv(name);
+    const float f=v && *v ? (float)atof(v) : 1.0f;
+    return f<0.25f ? 1.0f : f>20.0f ? 20.0f : f;
+}
 ABI void gow3_mouse_look_limits(float *limits) {
-    static float accel;
-    if (!mouse_direct || now_us()-mouse_moved_us>300000) return;
+    static float accel, pad_accel, pad_speed;
+    if (!mouse_direct || now_us()-mouse_moved_us>300000) {
+        if (pad_accel==0.0f) { pad_accel=pad_turn_factor("GOW3_PAD_TURN_ACCEL"); pad_speed=pad_turn_factor("GOW3_PAD_TURN_SPEED"); }
+        limits[3]*=pad_speed; limits[7]*=pad_speed;
+        limits[4]*=pad_accel*pad_speed; limits[8]*=pad_accel*pad_speed;
+        return;
+    }
     if (accel==0.0f) {
         const char *a=getenv("GOW3_MOUSE_DIRECT_ACCEL");
         accel=a && *a && atof(a)>0 ? (float)atof(a) : 50.0f;
