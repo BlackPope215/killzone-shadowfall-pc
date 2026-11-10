@@ -112,6 +112,9 @@ public:
     Frame* PrepareBlankFrame(bool present_thread);
 
     void Present(Frame* frame, bool is_reusing_frame = false, bool is_game_frame = true);
+    /// gow3: GOW3_FLIP_LATEST: a frame that is not shown (a newer one replaced it) goes back to
+    /// the free frames once the GPU has finished drawing it.
+    void ReleaseFrame(Frame* frame);
     /// gow3: a black frame with the loading screen (Gow3Overlay::SetLoading) only.
     void PresentLoadingFrame();
     Frame* PrepareLastFrame();
