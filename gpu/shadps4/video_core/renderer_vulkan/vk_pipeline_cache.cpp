@@ -1650,6 +1650,41 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     info.pgm_base = params.Base(); // Needs to be actualized for inline cbuffer address fixup
     info.user_data = params.user_data;
     info.RefreshFlatBuf();
+    // gow3: GOW3_SPEC_REUSE=1: same inputs as the last match, same permutation (Program::
+    // reuse_*). Tessellation stages read constants from memory into their specialization.
+    static const bool spec_reuse = [] {
+        const char* env = std::getenv("GOW3_SPEC_REUSE");
+        const bool on = env && env[0] == '1';
+        if (on) {
+            std::printf("Shaders: permutation reused when its inputs repeat (GOW3_SPEC_REUSE)\n");
+        }
+        return on;
+    }();
+    static u64 reuse_hits = 0, reuse_lookups = 0;
+    const bool reuse_eligible = spec_reuse && sw_stage != SwStage::TessellationControl &&
+                                sw_stage != SwStage::TessellationEval;
+    const auto start_binding = binding;
+    if (reuse_eligible) {
+        ++reuse_lookups;
+        if (program->reuse_idx < program->modules.size() &&
+            program->modules[program->reuse_idx].module == program->reuse_module &&
+            program->reuse_binding == binding && program->reuse_runtime &&
+            *program->reuse_runtime == runtime_info &&
+            program->reuse_flat == info.flattened_ud_buf) {
+            ++reuse_hits;
+            const size_t idx = program->reuse_idx;
+            program->last_used = idx;
+            info.AddBindings(binding);
+            return std::make_tuple(&program->info, program->modules[idx].module,
+                                   program->modules[idx].spec.fetch_shader_data,
+                                   HashCombine(params.hash, idx));
+        }
+        if ((reuse_lookups & ((1u << 20) - 1)) == 0) {
+            std::printf("Shaders: permutation reuse %.1f%% of %llu lookups\n",
+                        100.0 * double(reuse_hits) / double(reuse_lookups),
+                        static_cast<unsigned long long>(reuse_lookups));
+        }
+    }
     auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
 
     size_t perm_idx = program->modules.size();
@@ -1690,6 +1725,13 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         module = it->module;
         perm_idx = std::distance(program->modules.begin(), it);
         perm_hash = HashCombine(params.hash, perm_idx);
+        if (reuse_eligible) {
+            program->reuse_flat = info.flattened_ud_buf;
+            program->reuse_runtime = runtime_info;
+            program->reuse_binding = start_binding;
+            program->reuse_idx = perm_idx;
+            program->reuse_module = module;
+        }
     }
     return std::make_tuple(&program->info, module,
                            program->modules[perm_idx].spec.fetch_shader_data, perm_hash);
