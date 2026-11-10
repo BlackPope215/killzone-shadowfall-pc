@@ -1135,7 +1135,19 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 } else if (event->event_index.Value() == EventIndex::ZpassDone) {
                     if (event->event_type.Value() == EventType::PixelPipeStatDump) {
                         static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
-                        static constexpr u64 OcclusionCounterStep = 0x2FFFFFFULL;
+                        // gow3: occlusion queries are not run; every query reports many pixels,
+                        // so whatever the game hides behind them (light flares, glows) also shows
+                        // through walls. GOW3_OCCLUSION=hidden reports none instead: those effects
+                        // never show (a test, not real queries).
+                        static const u64 OcclusionCounterStep = [] {
+                            const char* env = std::getenv("GOW3_OCCLUSION");
+                            const bool hidden = env && (env[0] == 'h' || env[0] == '0');
+                            if (hidden) {
+                                std::printf("GPU: occlusion queries report nothing visible "
+                                            "(GOW3_OCCLUSION=hidden)\n");
+                            }
+                            return hidden ? 0ULL : 0x2FFFFFFULL;
+                        }();
                         u64* results = event->Address<u64*>();
                         for (s32 i = 0; i < num_counter_pairs; ++i, results += 2) {
                             *results = pixel_counter | OcclusionCounterValidMask;
