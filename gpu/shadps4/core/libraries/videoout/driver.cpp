@@ -545,6 +545,10 @@ void VideoOutDriver::Flip(const Request& req) {
         }
     }
 
+    FinishFlip(req);
+}
+
+void VideoOutDriver::FinishFlip(const Request& req) {
     // Update flip status.
     auto* port = req.port;
     {
@@ -701,14 +705,56 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     std::printf("VideoOut: vblank %u Hz, frame limit %u FPS\n",
                 EmulatorSettings.GetVblankFrequency(), frame_limit);
 
-    const auto receive_request = [this] -> Request {
-        std::scoped_lock lk{mutex};
-        if (!requests.empty()) {
-            const auto request = requests.front();
-            requests.pop();
-            return request;
+    // gow3: GOW3_FLIP_LATEST=1, with a frame limit and no frame generation: when newer frames
+    // wait in the queue, the older ones are not shown (their flip completes for the game as if
+    // shown, without presenting), so a finished frame never waits behind others: less input
+    // delay when the game draws faster than the limit.
+    static const bool flip_latest = [] {
+        const char* env = std::getenv("GOW3_FLIP_LATEST");
+        const bool on = env && env[0] == '1';
+        if (on) {
+            std::printf("VideoOut: only the newest queued frame is shown (GOW3_FLIP_LATEST)\n");
         }
-        return {};
+        return on;
+    }();
+    u64 flips_dropped = 0, flips_shown = 0;
+    auto flips_window = std::chrono::steady_clock::now();
+    const auto receive_request = [&, this] -> Request {
+        std::vector<Request> dropped;
+        Request request{};
+        {
+            std::scoped_lock lk{mutex};
+            if (requests.empty()) {
+                return {};
+            }
+            request = requests.front();
+            requests.pop();
+            const bool drop = flip_latest && frame_limit &&
+                              Gow3Settings::Get().frame_gen == Gow3Settings::FrameGenOff;
+            while (drop && !requests.empty() && request.index >= 0 &&
+                   requests.front().index >= 0 && requests.front().port == request.port) {
+                dropped.push_back(request);
+                request = requests.front();
+                requests.pop();
+            }
+        }
+        for (const Request& old : dropped) {
+            presenter->ReleaseFrame(old.frame);
+            FinishFlip(old);
+        }
+        if (flip_latest) {
+            flips_dropped += dropped.size();
+            ++flips_shown;
+            const auto now = std::chrono::steady_clock::now();
+            if (now - flips_window >= std::chrono::seconds(10)) {
+                std::printf("VideoOut: %llu frames shown, %llu older queued frames skipped in 10 s\n",
+                            static_cast<unsigned long long>(flips_shown),
+                            static_cast<unsigned long long>(flips_dropped));
+                flips_dropped = flips_shown = 0;
+                flips_window = now;
+            }
+        }
+        return request;
     };
 
     // gow3: with a frame limit (uncapped presets) a queued flip is presented as soon as it
