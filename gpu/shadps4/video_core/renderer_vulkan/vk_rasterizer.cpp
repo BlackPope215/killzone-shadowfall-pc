@@ -1021,13 +1021,8 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
         blocks[num_blocks++] = static_cast<u16>(block);
     }
 #else
-    if (dirty.blocks.any()) {
-        for (size_t block = 0; block < dirty.blocks.size(); ++block) {
-            if (dirty.blocks.test(block)) {
-                blocks[num_blocks++] = static_cast<u16>(block);
-            }
-        }
-    }
+    // gow3: word scan (RegDirty::ForEach); the bit-by-bit loop was ~15% of this thread.
+    dirty.ForEach([&](u32 block) { blocks[num_blocks++] = static_cast<u16>(block); });
 #endif
     const auto stages =
         pipeline ? pipeline->GetStages() : std::span<const Shader::Info* const>{};
