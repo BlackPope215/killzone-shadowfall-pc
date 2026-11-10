@@ -1552,7 +1552,10 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         CensusDraw(pipeline, regs, memory);
     }
     // Killzone: its TMAA would blend the jittered frames; FSR / DLSS do the temporal work.
-    if (upscaler->SkipGameTaa(pipeline->GetStage(Shader::SwStage::Fragment).pgm_hash)) {
+    // gow3: a draw without a pixel shader (stream-out geometry, depth only) has no fragment
+    // stage; GetStage would read through a null pointer.
+    const auto* taa_ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+    if (taa_ps && upscaler->SkipGameTaa(taa_ps->pgm_hash)) {
         static bool logged = false;
         if (!std::exchange(logged, true)) {
             std::printf("Upscaler: game temporal AA skipped (the port jitters the scene)\n");
