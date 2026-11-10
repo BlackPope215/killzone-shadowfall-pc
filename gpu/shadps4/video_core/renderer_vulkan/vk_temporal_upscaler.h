@@ -201,6 +201,9 @@ private:
     /// Sharpness above 1 for FSR 3/4 (their RCAS stops at 1): one more RCAS pass over the target
     /// (output_image, or the 8-bit UI image with ldr) in General layout after the upscaler.
     void ExtraSharpen(vk::CommandBuffer cmdbuf, vk::Image target, bool ldr, u32 w, u32 h);
+    /// gow3: repeats the last good row and column over the bottom and right edge FSR 4 leaves
+    /// bright (GOW3_FSR4_EDGE_FIX: pixels, default 2, 0 = off).
+    void FixFsr4Edges(vk::CommandBuffer cmdbuf, u32 ow, u32 oh);
 
     const Instance& instance;
     Scheduler& scheduler;

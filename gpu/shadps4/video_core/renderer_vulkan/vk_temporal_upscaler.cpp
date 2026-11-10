@@ -2242,6 +2242,9 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         Gow3Settings::Get().fsr4_problem = kept[next].c_str();
         next = (next + 1) % kept.size();
     }
+    if (ok) {
+        FixFsr4Edges(cmdbuf, ow, oh);
+    }
     if (!ok && fsr4->Fatal()) {
         std::printf("Upscaler: falling back to FSR 3.1\n");
         Gow3Settings::Get().upscaler = Gow3Settings::UpscalerFsr3;
@@ -2249,6 +2252,68 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         reset = true;
     }
     return ok;
+}
+
+void TemporalUpscaler::FixFsr4Edges(vk::CommandBuffer cmdbuf, u32 ow, u32 oh) {
+    // With a 1080p scene at 1440p, FSR 4 leaves its last two output rows and columns much
+    // brighter than the image (F12 screenshots, RX 7900 XT; FSR 3.1 and the native path have
+    // no such edge). The last good row and column are repeated over them.
+    static const u32 edge = [] {
+        const char* env = std::getenv("GOW3_FSR4_EDGE_FIX");
+        const int v = env && env[0] ? std::atoi(env) : 2;
+        return static_cast<u32>(std::clamp(v, 0, 8));
+    }();
+    if (edge == 0 || ow <= 2 * edge + 1 || oh <= 2 * edge + 1) {
+        return;
+    }
+    const vk::Image image = vk::Image(output_image);
+    const vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+    const auto barrier = [&](vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access,
+                             vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access) {
+        const vk::ImageMemoryBarrier2 b{
+            .srcStageMask = src_stage,
+            .srcAccessMask = src_access,
+            .dstStageMask = dst_stage,
+            .dstAccessMask = dst_access,
+            .oldLayout = vk::ImageLayout::eGeneral,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = image,
+            .subresourceRange = range,
+        };
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b});
+    };
+    const vk::ImageSubresourceLayers layers{vk::ImageAspectFlagBits::eColor, 0, 0, 1};
+    barrier(vk::PipelineStageFlagBits2::eAllCommands,
+            vk::AccessFlagBits2::eShaderWrite | vk::AccessFlagBits2::eShaderRead,
+            vk::PipelineStageFlagBits2::eCopy,
+            vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite);
+    // Columns first (rows above the bad bottom edge), then the rows over the full width,
+    // so the corner gets the repeated column too.
+    const s32 good_x = static_cast<s32>(ow - edge - 1), good_y = static_cast<s32>(oh - edge - 1);
+    std::vector<vk::ImageCopy> columns, rows;
+    for (u32 i = 0; i < edge; ++i) {
+        columns.push_back({.srcSubresource = layers, .srcOffset = {good_x, 0, 0},
+                           .dstSubresource = layers,
+                           .dstOffset = {static_cast<s32>(ow - edge + i), 0, 0},
+                           .extent = {1, oh - edge, 1}});
+        rows.push_back({.srcSubresource = layers, .srcOffset = {0, good_y, 0},
+                        .dstSubresource = layers,
+                        .dstOffset = {0, static_cast<s32>(oh - edge + i), 0},
+                        .extent = {ow, 1, 1}});
+    }
+    cmdbuf.copyImage(image, vk::ImageLayout::eGeneral, image, vk::ImageLayout::eGeneral, columns);
+    barrier(vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite,
+            vk::PipelineStageFlagBits2::eCopy,
+            vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite);
+    cmdbuf.copyImage(image, vk::ImageLayout::eGeneral, image, vk::ImageLayout::eGeneral, rows);
+    barrier(vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite,
+            vk::PipelineStageFlagBits2::eAllCommands,
+            vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite |
+                vk::AccessFlagBits2::eTransferRead);
+    static bool logged = false;
+    if (!std::exchange(logged, true)) {
+        std::printf("Upscaler: FSR 4 edge fix, last %u rows and columns repeated\n", edge);
+    }
 }
 
 bool TemporalUpscaler::UseDlss() const {
