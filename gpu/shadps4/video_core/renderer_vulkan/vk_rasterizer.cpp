@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <mutex>
 #include <unordered_set>
+#include <vector>
 #include <chrono>
 #include <xxhash.h>
 #include "video_core/renderer_vulkan/ui_composition.h"
@@ -1088,6 +1091,73 @@ bool Rasterizer::RunInOrder(OrderedTask task, const void* data, u32 size, u64 to
     return true;
 }
 
+// gow3: GOW3_JITTER_SCOPE=opaque: of the scene-depth draws, only the G-buffer and draws that
+// write depth are jittered; transparent draws over the scene (lights, flares, glows, particles)
+// stay on the pixel grid. GOW3_JITTER_SKIP="<hash> ...": these vertex or pixel shaders are never
+// jittered. GOW3_JITTER_LOG=1 prints each jittered draw that does not write depth (once per
+// shader pair).
+bool Rasterizer::JitterScope(const GraphicsPipeline* pipeline, const AmdGpu::Regs& regs,
+                             bool gbuffer, u32 indices, u32 instances) {
+    static const bool opaque_only = [] {
+        const char* env = std::getenv("GOW3_JITTER_SCOPE");
+        const bool on = env && (env[0] == 'o' || env[0] == 'O');
+        if (on) {
+            std::printf("Upscaler: jitter only for the G-buffer and depth-writing draws "
+                        "(GOW3_JITTER_SCOPE=opaque)\n");
+        }
+        return on;
+    }();
+    static const std::vector<u64> skip = [] {
+        std::vector<u64> list;
+        if (const char* env = std::getenv("GOW3_JITTER_SKIP")) {
+            for (const char* p = env; *p;) {
+                char* end = nullptr;
+                const u64 v = std::strtoull(p, &end, 16);
+                if (end == p) {
+                    ++p;
+                    continue;
+                }
+                list.push_back(v);
+                p = end;
+            }
+            std::printf("Upscaler: %zu shader(s) never jittered (GOW3_JITTER_SKIP)\n",
+                        list.size());
+        }
+        return list;
+    }();
+    static const bool log = [] {
+        const char* env = std::getenv("GOW3_JITTER_LOG");
+        return env && env[0] == '1';
+    }();
+    const u64 vs = pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash;
+    const auto* ps_stage = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+    const u64 ps = ps_stage ? ps_stage->pgm_hash : 0;
+    if (!skip.empty() && std::find_if(skip.begin(), skip.end(), [&](u64 h) {
+            return u32(h) == u32(vs) || u32(h) == u32(ps);
+        }) != skip.end()) {
+        return false;
+    }
+    const bool writes_depth =
+        regs.depth_control.depth_enable && regs.depth_control.depth_write_enable;
+    if (gbuffer || writes_depth) {
+        return true;
+    }
+    if (log) {
+        static std::unordered_set<u64> seen;
+        static std::mutex seen_mutex;
+        std::scoped_lock lock{seen_mutex};
+        if (seen.size() < 400 && seen.insert((vs << 32) ^ u32(ps)).second) {
+            const auto& bc = regs.blend_control[0];
+            std::printf("Upscaler: jittered draw without depth write: vs %08x ps %08x, %u indices, "
+                        "%u instances, depth test %u, blend %u (src %u dst %u)%s\n",
+                        u32(vs), u32(ps), indices, instances, u32(regs.depth_control.depth_enable),
+                        u32(bc.enable), u32(bc.color_src_factor), u32(bc.color_dst_factor),
+                        opaque_only ? ", not jittered" : "");
+        }
+    }
+    return !opaque_only;
+}
+
 void Rasterizer::OcclusionEvent(u32 kind, VAddr addr, u32 op, bool draw_visible) {
     struct Event {
         VAddr addr;
@@ -1590,7 +1660,9 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     // draws small 6-index quads there), and so is Killzone's depth pre-pass (SceneDepth).
     draw_jitter = {};
     if (upscaler->Enabled() && camera_motion->SceneDepth(db_desc.first) &&
-        (gbuffer_draw || regs.num_indices > 6 || regs.num_instances.NumInstances() > 1)) {
+        (gbuffer_draw || regs.num_indices > 6 || regs.num_instances.NumInstances() > 1) &&
+        JitterScope(pipeline, regs, gbuffer_draw, regs.num_indices,
+                    regs.num_instances.NumInstances())) {
         draw_jitter = upscaler->Jitter();
     }
     UpdateDynamicState(pipeline, is_indexed);
@@ -1747,7 +1819,8 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     push_data.yoffset = push_data.yoffset * target_scale[1] + target_offset[1];
     pipeline->BindResources(set_writes, set_write_index, push_data);
     draw_jitter = {};
-    if (upscaler->Enabled() && camera_motion->SceneDepth(db_desc.first)) {
+    if (upscaler->Enabled() && camera_motion->SceneDepth(db_desc.first) &&
+        JitterScope(pipeline, Regs(), gbuffer_draw, 0, 0)) {
         draw_jitter = upscaler->Jitter();
     }
     UpdateDynamicState(pipeline, is_indexed);
