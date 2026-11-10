@@ -717,6 +717,45 @@ void ScanDcb(std::span<const u32> dcb, int depth) {
 }
 } // namespace
 
+// gow3: GOW3_OCCLUSION=real: a ZPASS_DONE event at `addr`. The first of a pair opens a test
+// (begin counters at addr), the one at addr + 8 closes it (end counters). The GPU query runs in
+// order with the draws; the guest memory gets the last finished result for this test
+// (vk_occlusion.h), or a large count while there is none.
+void Liverpool::OcclusionGuestWrite(VAddr addr) {
+    static constexpr u64 ValidMask = 0x8000000000000000ULL;
+    static VAddr open_addr = 0;
+    static bool open = false;
+    static u64 begin_value = 0;
+    static u32 logged = 0;
+    if (logged < 6) {
+        ++logged;
+        std::printf("GPU: ZPASS_DONE at %llx (%s)\n", static_cast<unsigned long long>(addr),
+                    open && addr == open_addr + 8 ? "end" : "begin");
+    }
+    auto* results = reinterpret_cast<u64*>(addr);
+    if (open && addr == open_addr + 8) {
+        open = false;
+        u64 visible = 0x2FFFFFFULL;
+        if (rasterizer) {
+            rasterizer->OcclusionLookup(open_addr, visible);
+        }
+        for (s32 i = 0; i < num_counter_pairs; ++i, results += 2) {
+            *results = (begin_value + (i == 0 ? visible : 0)) | ValidMask;
+        }
+        pixel_counter = begin_value + visible + 1;
+    } else {
+        open = true;
+        open_addr = addr;
+        begin_value = pixel_counter;
+        for (s32 i = 0; i < num_counter_pairs; ++i, results += 2) {
+            *results = begin_value | ValidMask;
+        }
+    }
+    if (rasterizer) {
+        rasterizer->OcclusionEvent(0, addr);
+    }
+}
+
 Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb,
                                            u64 seq) {
     FIBER_ENTER(dcb_task_name);
@@ -922,6 +961,34 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break; // registers: ApplyGraphicsRegisterPacket
             }
             case PM4ItOpcode::SetPredication: {
+                // gow3 (Killzone): GOW3_OCCLUSION=real (vk_occlusion.h) runs ZPASS predication.
+                static const bool real = Vulkan::OcclusionQueries::Enabled();
+                if (real && rasterizer) {
+                    const u32 count = header->type3.NumWords();
+                    const u32* body = reinterpret_cast<const u32*>(header) + 1;
+                    u32 flags = 0;
+                    VAddr addr = 0;
+                    if (count >= 3) { // GFX9 layout: flags, address low, address high
+                        flags = body[0];
+                        addr = VAddr(body[1]) | (VAddr(body[2] & 0xffff) << 32);
+                    } else if (count == 2) { // GCN: address low, flags | address high
+                        flags = body[1];
+                        addr = VAddr(body[0]) | (VAddr(body[1] & 0xff) << 32);
+                    }
+                    const u32 op = (flags >> 16) & 7;
+                    const bool draw_visible = (flags >> 8) & 1;
+                    static u32 logged = 0;
+                    if (logged < 6) {
+                        ++logged;
+                        std::printf("GPU: SET_PREDICATION %u dwords, op %u, draw if %s, flags "
+                                    "%08x, address %llx\n",
+                                    count, op, draw_visible ? "visible" : "not visible", flags,
+                                    static_cast<unsigned long long>(addr));
+                    }
+                    addr &= ~VAddr(0xf);
+                    rasterizer->OcclusionEvent(1, addr, op, draw_visible);
+                    break;
+                }
                 // gow3: once; God of War III sets it around most draws (~1000 lines a frame).
                 static std::once_flag predication_logged;
                 std::call_once(predication_logged,
@@ -1133,7 +1200,14 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 if (event->event_type.Value() == EventType::SoVgtStreamoutFlush) {
                     // registers: ApplyGraphicsRegisterPacket
                 } else if (event->event_index.Value() == EventIndex::ZpassDone) {
-                    if (event->event_type.Value() == EventType::PixelPipeStatDump) {
+                    // gow3 (Killzone): the game writes ZPASS_DONE events (type ZpassDone); the
+                    // GOW3_OCCLUSION=real path (vk_occlusion.h) runs them as GPU queries.
+                    const auto type = event->event_type.Value();
+                    static const bool real = Vulkan::OcclusionQueries::Enabled();
+                    if (real && (type == EventType::ZpassDone ||
+                                 type == EventType::PixelPipeStatDump)) {
+                        OcclusionGuestWrite(event->Address<VAddr>());
+                    } else if (type == EventType::PixelPipeStatDump) {
                         static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
                         // gow3: occlusion queries are not run; every query reports many pixels,
                         // so whatever the game hides behind them (light flares, glows) also shows
