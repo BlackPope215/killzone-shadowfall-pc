@@ -30,8 +30,9 @@ inline constexpr u32 DefaultHashes[] = {
     0x53ee1598, // decal box writing all five G-buffer targets (bedroom lamp, frame pass #62)
     0xf82bd030, // the decal box VERTEX shader: every pixel shader variant drawn with it
                 // (53ee1598 in the prologue, 383d5b48 in the next chapter, ...)
-    0x95ec1de3, // vertex shaders of two more decal shapes (ps 6324d6c8 / c5f108d0 and ps de99caab):
-    0x262ca505, // with both, the specks in the chapter 2 tunnel are gone (not yet told apart)
+    0x95ec1de3, // a second decal shape (ps 6324d6c8, c5f108d0): specks in the chapter 2 tunnel
+    // Not 262ca505 (ps de99caab): a snapshot for it makes a blue-violet light flicker over whole
+    // areas (chapter 2 ruins, 2026-11-10).
 };
 
 struct Config {
