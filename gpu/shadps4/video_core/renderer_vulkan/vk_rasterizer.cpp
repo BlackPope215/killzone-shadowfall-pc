@@ -855,6 +855,68 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
     pending_max = std::max(pending_max, end);
 }
 
+bool Rasterizer::CeDumpCheck() {
+    static const bool on = [] {
+        const char* env = std::getenv("GOW3_CE_DUMP_CHECK");
+        const bool v = env && env[0] == '1';
+        if (v) {
+            std::printf("GPU: constant RAM dumps wait for the recording thread only when queued "
+                        "work reads the range (GOW3_CE_DUMP_CHECK)\n");
+        }
+        return v;
+    }();
+    return on;
+}
+
+void Rasterizer::NotePendingGpuRead(VAddr address, u64 size) {
+    if (!draw_pipe || !size || !CeDumpCheck()) {
+        return;
+    }
+    const u64 position = draw_pipe->Head();
+    const VAddr end = address + size;
+    for (auto& read : pending_reads) {
+        if (address <= read.end && read.begin <= end) {
+            read.begin = std::min(read.begin, address);
+            read.end = std::max(read.end, end);
+            read.position = position;
+            pending_read_min = std::min(pending_read_min, read.begin);
+            pending_read_max = std::max(pending_read_max, read.end);
+            return;
+        }
+    }
+    pending_reads.push_back({address, end, position});
+    pending_read_min = std::min(pending_read_min, address);
+    pending_read_max = std::max(pending_read_max, end);
+}
+
+bool Rasterizer::PendingReadOverlaps(VAddr address, u64 size) {
+    if (!draw_pipe || draw_pipe->Idle()) {
+        return false;
+    }
+    if ((++pending_read_checks & 63) == 0) {
+        std::erase_if(pending_reads, [&](const PendingWrite& read) {
+            return draw_pipe->Reached(read.position);
+        });
+        pending_read_min = ~VAddr{0};
+        pending_read_max = 0;
+        for (const auto& read : pending_reads) {
+            pending_read_min = std::min(pending_read_min, read.begin);
+            pending_read_max = std::max(pending_read_max, read.end);
+        }
+    }
+    if (pending_reads.empty() || address >= pending_read_max ||
+        address + size <= pending_read_min) {
+        return false;
+    }
+    const VAddr end = address + size;
+    for (const auto& read : pending_reads) {
+        if (address < read.end && read.begin < end && !draw_pipe->Reached(read.position)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
     if (pending_writes.empty() || address >= pending_max || address + size <= pending_min) {
         return false;
@@ -934,6 +996,7 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         // written by the GPU (now or by work still queued for the recording thread).
         if (size == 0 || size > VideoCore::BufferCache::STREAM_THRESHOLD ||
             buffer_cache.IsRegionGpuModified(address, size) || PendingWriteOverlaps(address, size)) {
+            NotePendingGpuRead(address, size); // read by the recording thread itself
             continue;
         }
         copy(index, nullptr, address, size);

@@ -137,6 +137,12 @@ public:
     /// Stage A: guest memory the recording thread will write for work handed to it (storage
     /// buffers, DMA, WriteData, fences); constants overlapping it are bound there, not copied here.
     void NotePendingGpuWrite(VAddr address, u64 size);
+    /// gow3: GOW3_CE_DUMP_CHECK=1. Stage A: a guest range the recording thread will read
+    /// itself, and whether a write to a range may change what queued work reads (a constant
+    /// RAM dump then waits for the recording thread; otherwise it does not).
+    void NotePendingGpuRead(VAddr address, u64 size);
+    bool PendingReadOverlaps(VAddr address, u64 size);
+    static bool CeDumpCheck();
     /// Before a guest-visible write: fences deferred earlier are written first.
     void WaitDeferredSignals() {
         scheduler.WaitDeferredSignals();
@@ -571,6 +577,11 @@ private:
     };
     std::vector<PendingWrite> pending_writes;
     VAddr pending_min = ~VAddr{0}, pending_max = 0; ///< bounds of pending_writes
+    /// gow3: GOW3_CE_DUMP_CHECK: guest buffers that work handed to the recording thread reads
+    /// there from guest memory (not copied into the constant ring).
+    std::vector<PendingWrite> pending_reads;
+    VAddr pending_read_min = ~VAddr{0}, pending_read_max = 0;
+    u32 pending_read_checks = 0;
     u32 pending_checks = 0;
     u64 proxy_samples = 0; ///< texture bindings that read a scene proxy (statistics)
     float sampler_lod_bias = 0.0f; ///< gow3: extra bias of this draw's samplers

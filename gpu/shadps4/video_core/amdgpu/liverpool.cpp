@@ -439,10 +439,17 @@ Liverpool::Task Liverpool::ProcessCeUpdate(std::span<const u32> ccb) {
         }
         case PM4ItOpcode::DumpConstRam: {
             // gow3: earlier draws on the recording thread may still read constants here.
-            if (rasterizer) {
-                rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonConstRam);
-            }
+            // GOW3_CE_DUMP_CHECK=1: they read the small constant buffers from copies made when
+            // they were handed over (Rasterizer::CollectRingBindings), so only a dump over a
+            // range they read themselves waits.
             const auto* dump_const = reinterpret_cast<const PM4DumpConstRam*>(header);
+            if (rasterizer) {
+                if (!Vulkan::Rasterizer::CeDumpCheck() ||
+                    rasterizer->PendingReadOverlaps(dump_const->Address<VAddr>(),
+                                                    dump_const->Size())) {
+                    rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonConstRam);
+                }
+            }
             memcpy(dump_const->Address<void*>(),
                    cblock.constants_heap.data() + dump_const->Offset(), dump_const->Size());
             break;
