@@ -7,6 +7,7 @@
 // later draws read those buffers, DRAW_INDEX_AUTO draws that take their vertex count from a
 // stream-out fill level, and how many stream-out draws are skipped per second.
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -119,10 +120,13 @@ inline void Describe(const AmdGpu::Regs& regs) {
                 const VAddr at = table + smrd.offset * 4;
                 if (table && memory->IsValidGpuMapping(at, 16)) {
                     const auto* vsharp = reinterpret_cast<const u32*>(at);
-                    const VAddr addr = VAddr(vsharp[0]) | (VAddr(vsharp[1] & 0xFFFF) << 32);
+                    // V#: base address is 44 bits (word 1 bits 0-11); stream-out buffers set
+                    // num_records to the maximum, the real size is VGT_STRMOUT_BUFFER_SIZE.
+                    const VAddr addr = VAddr(vsharp[0]) | (VAddr(vsharp[1] & 0xFFF) << 32);
                     const u32 stride = (vsharp[1] >> 16) & 0x3FFF;
                     const u32 records = vsharp[2];
-                    const u64 bytes = u64(records) * (stride ? stride : 1);
+                    const u64 bytes = std::min<u64>(u64(records) * (stride ? stride : 1),
+                                                    u64(1) << 20);
                     std::printf(" -> V# %llx stride %u records %u (%llu bytes)",
                                 static_cast<unsigned long long>(addr), stride, records,
                                 static_cast<unsigned long long>(bytes));
