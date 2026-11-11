@@ -752,9 +752,9 @@ void PerformanceTab() {
     auto& s = Gow3Settings::Get();
     ImGui::SeparatorText("Live");
     if (BeginRows("##live")) {
-        static const char* const fps_labels[] = {"30", "60", "120", "144", "240", "Unlimited"};
+        static const char* const fps_labels[] = {"30", "60", "72", "90", "100", "120", "144", "240", "Unlimited"};
         ChoiceRow("Frame rate limit", s.fps_limit, fps_labels, G::FpsLimits.data(), int(G::FpsLimits.size()),
-                  "Caps the frame rate. The engine frame rate (below) is the highest it can go.");
+                  "Caps the frame rate. A steady cap the game always holds (72 at 144 Hz) is smoother than a higher one it misses.");
         const int effective = G::EffectiveFps(s.fps_limit, s.applied_engine_fps);
         // gow3: games without frame rate patches (Killzone) have no engine frame rate to show.
         static const bool game_patches = [] {
@@ -773,7 +773,7 @@ void PerformanceTab() {
             return !v || std::atoi(v) > 0;
         }();
         if (!game_patches && vblank_paced && (s.fps_limit == 0 || s.fps_limit > 60)) {
-            InfoRow("Effective limit", "60 FPS: choose 144 / 240 / Unlimited in the launcher");
+            InfoRow("Effective limit", "60 FPS: choose 72 FPS or higher in the launcher");
         }
         if (game_patches && s.applied_engine_fps < s.startup_engine_fps) {
             InfoRow("Engine frame rate", "60 FPS: the frame rate patch is not available for this game build");

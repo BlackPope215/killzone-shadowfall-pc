@@ -225,8 +225,8 @@ class Api:
                        [t('ultrawide_off')] + [f"{s.replace('x', ' × ')} · {aspects[s]}" for s in c.ULTRAWIDE[1:]],
                        'ultrawide_help'),
                 select('fps_limit', 'fps_limit', c.FPS_LIMITS,
-                       ['30 FPS', '60 FPS', f"144 FPS ({t('fps_experimental')})",
-                        f"240 FPS ({t('fps_experimental')})", t('fps_unlimited')], 'fps_limit_help'),
+                       ['30 FPS', '60 FPS'] + [f"{v} FPS ({t('fps_experimental')})" for v in c.FPS_LIMITS[2:-1]]
+                       + [t('fps_unlimited')], 'fps_limit_help'),
                 toggle('vsync', 'vsync', 'vsync_help'),
                 toggle('show_fps', 'show_fps'),
                 slider('fov', 'fov', c.FOV_MIN, c.FOV_MAX, 5, '%', 'fov_help', default=100),
