@@ -508,6 +508,25 @@ void DrawPreparation::Count(bool was_used) {
                 (unsigned long long)m[3], (unsigned long long)m[4], (unsigned long long)m[5],
                 (unsigned long long)m[6], (unsigned long long)g_gow3_prep_waited,
                 (unsigned long long)g_gow3_prep_wait_hits);
+    {
+        std::array<std::pair<u32, u32>, 6> top{};
+        for (u32 line = 0; line < g_gow3_prep_fail_lines.size(); ++line) {
+            const u32 n = g_gow3_prep_fail_lines[line].exchange(0, std::memory_order_relaxed);
+            if (n > top.back().second) {
+                top.back() = {line, n};
+                std::sort(top.begin(), top.end(), [](auto a, auto b) { return a.second > b.second; });
+            }
+        }
+        std::printf("Draw preparation gives up at vk_pipeline_cache.cpp lines:");
+        for (const auto& [line, n] : top) {
+            if (n) std::printf(" %u x%u", line, n);
+        }
+        const auto& f = g_gow3_prep_flat_stage;
+        std::printf("; user data differs by hw stage: ps %llu vs %llu gs %llu es %llu hs %llu ls %llu\n",
+                    (unsigned long long)f[0], (unsigned long long)f[1], (unsigned long long)f[2],
+                    (unsigned long long)f[3], (unsigned long long)f[4], (unsigned long long)f[5]);
+        g_gow3_prep_flat_stage.fill(0);
+    }
     g_gow3_prep_miss.fill(0);
     g_gow3_prep_waited = g_gow3_prep_wait_hits = 0;
     used = unused = 0;
