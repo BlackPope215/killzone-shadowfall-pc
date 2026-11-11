@@ -16,6 +16,24 @@ namespace Shader {
 using PFN_SrtWalker = void PS4_SYSV_ABI (*)(const u32* /*user_data*/, u32* /*flat_dst*/);
 PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size);
 
+/// gow3: guest memory as it will be when the GPU thread reaches a draw: writes not done yet
+/// (constant engine dumps ahead of it), oldest first. Draw-preparation workers walk a draw's
+/// resource tables through it (OverlayWalker), on their own thread.
+struct SrtOverlayEntry {
+    u64 address;
+    u32 size;
+    const u8* data;
+};
+struct SrtOverlay {
+    const SrtOverlayEntry* entries{};
+    size_t count{};
+    u64 lo{~0ull}, hi{}; ///< bounds of all entries
+};
+extern thread_local const SrtOverlay* g_srt_overlay;
+/// The same walker with every guest memory read taken through g_srt_overlay; null when its
+/// code cannot be translated (then the plain walker is used).
+PFN_SrtWalker OverlayWalker(PFN_SrtWalker walker, size_t size);
+
 struct PersistentSrtInfo {
     // Special case when fetch shader uses step rates.
     struct SrtSharpReservation {

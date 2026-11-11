@@ -86,6 +86,8 @@ inline u64 g_gow3_prep_waited{}, g_gow3_prep_wait_hits{};
 /// flattened user data differed on the GPU thread.
 inline std::array<std::atomic<u32>, 4096> g_gow3_prep_fail_lines{};
 inline std::array<u64, 8> g_gow3_prep_flat_stage{};
+/// Constant engine dumps the scanner simulated, and dumps a worker could not simulate.
+inline std::atomic<u64> g_gow3_prep_ce_dumps{0}, g_gow3_prep_ce_bad{0};
 
 struct PreparedDraw {
     enum : u32 { Pending = 0, Ready = 1, Unavailable = 2 };
@@ -112,13 +114,18 @@ public:
     struct Submission;
     /// Game submit thread, outside the queue lock: copies and scans a top-level graphics
     /// command buffer. Null when disabled.
-    std::shared_ptr<Submission> Build(std::span<const u32> commands);
+    std::shared_ptr<Submission> Build(std::span<const u32> commands,
+                                      std::span<const u32> ce_commands = {});
     /// Game submit thread, under the queue lock: hands it to the workers in submission order.
     void Enqueue(u64 seq, std::shared_ptr<Submission> submission);
 
     /// GPU thread: brackets the processing of submission `seq`. The first call hands the
     /// workers the exact register state and checksum they start replaying from.
-    void BeginSubmission(u64 seq, const AmdGpu::Regs& regs, u64 reg_checksum);
+    /// `ce_heap`: the constant engine RAM at the start of the buffer (CeHeapSize bytes).
+    void BeginSubmission(u64 seq, const AmdGpu::Regs& regs, u64 reg_checksum,
+                         const u8* ce_heap = nullptr);
+    static constexpr size_t CeHeapSize = 48 * 1024;
+    using CeHeap = std::array<u8, CeHeapSize>;
     void EndSubmission();
 
     /// GPU thread: the prepared state for the next direct draw of the current submission.
@@ -135,6 +142,18 @@ public:
         std::vector<std::unique_ptr<u32[]>> flat_chunks; ///< from the claiming worker
         u64 start_checksum{}, end_checksum{}; ///< set by the scanner
         AmdGpu::RegDelta delta;                ///< registers written, values at the end
+        /// gow3: the constant engine buffer with its indirect buffers inlined, and the dumps
+        /// it makes into guest memory (scanner, CeSim): each becomes visible to the draws from
+        /// `visible_from` on, as on the GPU thread.
+        std::vector<u32> ce_commands;
+        struct Dump {
+            u64 address;
+            u32 size;
+            u32 visible_from; ///< ordinal of the first direct draw that sees it
+            u32 offset;       ///< into dump_bytes
+        };
+        std::vector<Dump> dumps;
+        std::vector<u8> dump_bytes;
         std::atomic<bool> scanned{false};
         std::atomic<bool> claimed{false};
         std::atomic<bool> gpu_done{false};
@@ -152,6 +171,8 @@ private:
     /// State at the start of the oldest queued buffer (`tail_seq`): a worker whose position
     /// was collected restarts from here. Guarded by `mutex`.
     std::unique_ptr<AmdGpu::Regs> tail_regs;
+    std::unique_ptr<CeHeap> tail_heap; ///< constant engine RAM at `tail_seq` (scanner rebases)
+    bool ce_known = false;             ///< the GPU thread passed its heap with the baseline
     u64 tail_seq{};
     u64 tail_checksum{};
     u64 rebases = 0; ///< scanner restarts from the GPU thread state (GOW3_FRAME_STATS)

@@ -47,6 +47,102 @@ void ForEachPacket(std::span<const u32> commands, Func&& func) {
     }
 }
 
+/// gow3: GOW3_PREP_CE=0: workers read guest memory as it is (constant engine dumps the GPU
+/// thread has not made yet are missing: about half the Killzone draws were then unusable).
+bool CeSimulation() {
+    static const bool on = [] {
+        const char* env = std::getenv("GOW3_PREP_CE");
+        return !(env && env[0] == '0');
+    }();
+    return on;
+}
+
+/// Appends a constant engine buffer, its indirect buffers inlined (their memory is final when
+/// the game submits).
+void AppendCe(std::vector<u32>& out, std::span<const u32> commands, int depth) {
+    ForEachPacket(commands, [&](const AmdGpu::PM4Header* header) {
+        const u32 words = header->type3.NumWords() + 1;
+        if (header->type3.opcode == AmdGpu::PM4ItOpcode::IndirectBufferConst) {
+            const auto* ib = reinterpret_cast<const AmdGpu::PM4CmdIndirectBuffer*>(header);
+            if (depth < 4 && ib->ib_size > 0) {
+                AppendCe(out, {ib->Address<const u32>(), ib->ib_size}, depth + 1);
+            }
+            return;
+        }
+        const auto* first = reinterpret_cast<const u32*>(header);
+        out.insert(out.end(), first, first + words);
+    });
+}
+
+/// The constant engine of one submission, as Liverpool::ProcessCeUpdate runs it: from the
+/// start until it waits for the draw engine, resumed when the draw engine waits for it.
+struct CeSim {
+    DrawPreparation::CeHeap& heap;
+    DrawPreparation::Submission& submission;
+    size_t at = 0;
+    u32 ce_count = 0;
+    bool done = false;
+
+    /// Runs until it blocks or ends; true if it moved.
+    bool Run(u32 de_count, u32 draw_ordinal) {
+        const auto& commands = submission.ce_commands;
+        const size_t start = at;
+        while (at < commands.size()) {
+            const auto* header = reinterpret_cast<const AmdGpu::PM4Header*>(commands.data() + at);
+            if (header->type == 2) {
+                ++at;
+                continue;
+            }
+            if (header->type != 3) {
+                break;
+            }
+            const size_t words = header->type3.NumWords() + 1;
+            if (at + words > commands.size()) {
+                break;
+            }
+            const auto* body = reinterpret_cast<const u32*>(header) + 1;
+            switch (header->type3.opcode) {
+            case AmdGpu::PM4ItOpcode::WriteConstRam: {
+                const auto* write = reinterpret_cast<const AmdGpu::PM4WriteConstRam*>(header);
+                if (size_t(write->Offset()) + write->Size() <= heap.size()) {
+                    std::memcpy(heap.data() + write->Offset(), &write->data, write->Size());
+                }
+                break;
+            }
+            case AmdGpu::PM4ItOpcode::DumpConstRam: {
+                const auto* dump = reinterpret_cast<const AmdGpu::PM4DumpConstRam*>(header);
+                const u32 size = dump->Size();
+                if (size && size_t(dump->Offset()) + size <= heap.size()) {
+                    const u32 offset = u32(submission.dump_bytes.size());
+                    submission.dump_bytes.insert(submission.dump_bytes.end(),
+                                                 heap.data() + dump->Offset(),
+                                                 heap.data() + dump->Offset() + size);
+                    submission.dumps.push_back(
+                        {dump->Address<u64>(), size, draw_ordinal, offset});
+                    g_gow3_prep_ce_dumps.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    g_gow3_prep_ce_bad.fetch_add(1, std::memory_order_relaxed);
+                }
+                break;
+            }
+            case AmdGpu::PM4ItOpcode::IncrementCeCounter:
+                ++ce_count;
+                break;
+            case AmdGpu::PM4ItOpcode::WaitOnDeCounterDiff:
+                if (u32(de_count - ce_count) >= body[0]) {
+                    return at != start; // blocked until the draw engine moves on
+                }
+                break;
+            default:
+                break;
+            }
+            at += words;
+        }
+        done = true;
+        return at != start;
+    }
+};
+
 u32 DefaultWorkerCount() {
     if (const char* env = std::getenv("GOW3_PREP_WORKERS")) {
         return static_cast<u32>(std::clamp(std::atoi(env), 0, 16));
@@ -222,12 +318,15 @@ DrawPreparation::~DrawPreparation() {
 }
 
 std::shared_ptr<DrawPreparation::Submission> DrawPreparation::Build(
-    std::span<const u32> commands) {
+    std::span<const u32> commands, std::span<const u32> ce_commands) {
     if (!Enabled()) {
         return {};
     }
     auto submission = std::make_shared<Submission>();
     submission->commands.assign(commands.begin(), commands.end());
+    if (CeSimulation() && !ce_commands.empty()) {
+        AppendCe(submission->ce_commands, ce_commands, 0);
+    }
     ForEachPacket(submission->commands, [&](const AmdGpu::PM4Header* header) {
         submission->num_draws += IsDirectDraw(header->type3.opcode);
     });
@@ -247,7 +346,8 @@ void DrawPreparation::Enqueue(u64 seq, std::shared_ptr<Submission> submission) {
     cv.notify_all();
 }
 
-void DrawPreparation::BeginSubmission(u64 seq, const AmdGpu::Regs& regs, u64 reg_checksum) {
+void DrawPreparation::BeginSubmission(u64 seq, const AmdGpu::Regs& regs, u64 reg_checksum,
+                                      const u8* ce_heap) {
     current_draw = 0;
     current.reset();
     if (!Enabled()) {
@@ -260,6 +360,11 @@ void DrawPreparation::BeginSubmission(u64 seq, const AmdGpu::Regs& regs, u64 reg
         tail_regs = std::make_unique<AmdGpu::Regs>(regs);
         initial_checksum = tail_checksum = reg_checksum;
         baseline_seq = tail_seq = seq;
+        tail_heap = std::make_unique<CeHeap>();
+        ce_known = ce_heap != nullptr;
+        if (ce_heap) {
+            std::memcpy(tail_heap->data(), ce_heap, CeHeapSize);
+        }
         baseline_ready = true;
         cv.notify_all();
     }
@@ -271,6 +376,9 @@ void DrawPreparation::BeginSubmission(u64 seq, const AmdGpu::Regs& regs, u64 reg
         *tail_regs = regs;
         tail_seq = seq;
         tail_checksum = reg_checksum;
+        if (ce_heap && tail_heap) {
+            std::memcpy(tail_heap->data(), ce_heap, CeHeapSize);
+        }
         while (!submissions.empty() && submissions.front()->seq < seq) {
             submissions.pop_front();
         }
@@ -328,6 +436,7 @@ void DrawPreparation::ScannerLoop(std::stop_token stop) {
     Common::SetCurrentThreadName("gow3:DrawScan");
     Gow3Threads::MakeBackground();
     std::unique_ptr<AmdGpu::Regs> regs;
+    std::unique_ptr<CeHeap> heap;
     u64 checksum = 0;
     u64 next_seq = 0;
     {
@@ -339,6 +448,7 @@ void DrawPreparation::ScannerLoop(std::stop_token stop) {
         regs = std::make_unique<AmdGpu::Regs>(*initial_regs);
         checksum = initial_checksum;
         next_seq = baseline_seq;
+        heap = std::make_unique<CeHeap>(*tail_heap);
     }
     AmdGpu::RegDirty dirty;
     while (!stop.stop_requested()) {
@@ -357,6 +467,7 @@ void DrawPreparation::ScannerLoop(std::stop_token stop) {
                 *regs = *tail_regs;
                 checksum = tail_checksum;
                 next_seq = tail_seq;
+                *heap = *tail_heap;
                 continue;
             }
             // Unscanned buffers are only collected by a rebase, so `next_seq` is still queued.
@@ -364,9 +475,35 @@ void DrawPreparation::ScannerLoop(std::stop_token stop) {
         }
         submission->start_checksum = checksum;
         dirty.Clear();
+        CeSim ce{*heap, *submission};
+        u32 de_count = 0, draw_ordinal = 0;
+        const bool simulate = ce_known && !submission->ce_commands.empty();
+        if (simulate) {
+            ce.Run(de_count, draw_ordinal);
+        }
         ForEachPacket(submission->commands, [&](const AmdGpu::PM4Header* header) {
             AmdGpu::Liverpool::ApplyGraphicsRegisterPacket(*regs, header, checksum, &dirty);
+            if (!simulate) {
+                return;
+            }
+            switch (header->type3.opcode) {
+            case AmdGpu::PM4ItOpcode::IncrementDeCounter:
+                ++de_count;
+                break;
+            case AmdGpu::PM4ItOpcode::WaitOnCeCounter:
+                while (ce.ce_count <= de_count && !ce.done && ce.Run(de_count, draw_ordinal)) {
+                }
+                break;
+            default:
+                draw_ordinal += IsDirectDraw(header->type3.opcode);
+                break;
+            }
         });
+        if (simulate) {
+            // What remains runs when the GPU thread reaches the end (drawn by nothing here).
+            while (!ce.done && ce.Run(de_count, draw_ordinal)) {
+            }
+        }
         submission->delta.Capture(*regs, dirty);
         submission->end_checksum = checksum;
         {
@@ -390,6 +527,10 @@ void DrawPreparation::WorkerLoop(std::stop_token stop, u32 index) {
     sel.worker = &prep_worker;
     FlatArena arena;
     std::vector<std::shared_ptr<Submission>> path;
+    // gow3: constant engine dumps between the GPU thread and the draw being prepared.
+    std::vector<std::shared_ptr<Submission>> ce_sources;
+    std::vector<Shader::SrtOverlayEntry> ce_entries;
+    Shader::SrtOverlay ce_overlay{};
 
     // The nearest scanned buffer the GPU thread has not reached and no worker has claimed.
     const auto claimable = [&]() -> std::shared_ptr<Submission> {
@@ -428,7 +569,26 @@ void DrawPreparation::WorkerLoop(std::stop_token stop, u32 index) {
             for (u64 seq = position; seq < target->seq; ++seq) {
                 path.push_back(submissions[seq - front]);
             }
+            // Earlier buffers the GPU thread has not finished: all their dumps come first.
+            ce_sources.clear();
+            const u64 gpu = gpu_seq.load(std::memory_order_acquire);
+            for (u64 seq = std::max(gpu, front); seq < target->seq; ++seq) {
+                ce_sources.push_back(submissions[seq - front]);
+            }
         }
+        ce_entries.clear();
+        ce_overlay = {};
+        const auto add_dump = [&](const Submission& from, const Submission::Dump& dump) {
+            ce_entries.push_back({dump.address, dump.size, from.dump_bytes.data() + dump.offset});
+            ce_overlay.lo = std::min(ce_overlay.lo, dump.address);
+            ce_overlay.hi = std::max(ce_overlay.hi, dump.address + dump.size);
+        };
+        for (const auto& source : ce_sources) {
+            for (const auto& dump : source->dumps) {
+                add_dump(*source, dump);
+            }
+        }
+        size_t next_dump = 0;
         for (const auto& step : path) {
             step->delta.Apply(*regs);
         }
@@ -448,7 +608,16 @@ void DrawPreparation::WorkerLoop(std::stop_token stop, u32 index) {
                 prep_worker.stages.clear();
                 prep_worker.failed = false;
                 sel.draw_indirect_params = {};
-                if (pipeline_cache.PrepareGraphicsPipeline(sel)) {
+                while (next_dump < target->dumps.size() &&
+                       target->dumps[next_dump].visible_from <= ordinal) {
+                    add_dump(*target, target->dumps[next_dump++]);
+                }
+                ce_overlay.entries = ce_entries.data();
+                ce_overlay.count = ce_entries.size();
+                Shader::g_srt_overlay = ce_overlay.count ? &ce_overlay : nullptr;
+                const bool prepared_ok = pipeline_cache.PrepareGraphicsPipeline(sel);
+                Shader::g_srt_overlay = nullptr;
+                if (prepared_ok) {
                     draw.reg_checksum = checksum;
                     draw.key = sel.graphics_key;
                     draw.num_stages = static_cast<u32>(prep_worker.stages.size());
@@ -526,6 +695,10 @@ void DrawPreparation::Count(bool was_used) {
                     (unsigned long long)f[0], (unsigned long long)f[1], (unsigned long long)f[2],
                     (unsigned long long)f[3], (unsigned long long)f[4], (unsigned long long)f[5]);
         g_gow3_prep_flat_stage.fill(0);
+        std::printf("Draw preparation: %llu constant engine dumps simulated, %llu not (%s)\n",
+                    (unsigned long long)g_gow3_prep_ce_dumps.exchange(0),
+                    (unsigned long long)g_gow3_prep_ce_bad.exchange(0),
+                    CeSimulation() ? "GOW3_PREP_CE on" : "GOW3_PREP_CE=0");
     }
     g_gow3_prep_miss.fill(0);
     g_gow3_prep_waited = g_gow3_prep_wait_hits = 0;
