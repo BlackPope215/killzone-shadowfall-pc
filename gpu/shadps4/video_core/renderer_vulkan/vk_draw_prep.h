@@ -76,6 +76,13 @@ struct PreparedVertexInputs {
     bool valid;
 };
 
+/// gow3: why the GPU thread did not use a prepared draw (GOW3_FRAME_STATS, GPU thread only):
+/// still pending, worker gave up, registers differ, stage program differs, flattened user data
+/// differs, pipeline not built, no prepared draw at all.
+enum class PrepMiss : u32 { Pending, Unavailable, Checksum, Program, Flat, Pipeline, None, Count };
+inline std::array<u64, u32(PrepMiss::Count)> g_gow3_prep_miss{};
+inline u64 g_gow3_prep_waited{}, g_gow3_prep_wait_hits{};
+
 struct PreparedDraw {
     enum : u32 { Pending = 0, Ready = 1, Unavailable = 2 };
     std::atomic<u32> state{Pending};

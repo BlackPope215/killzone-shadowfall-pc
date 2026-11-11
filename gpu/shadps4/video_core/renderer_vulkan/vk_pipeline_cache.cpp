@@ -1088,9 +1088,34 @@ bool PipelineCache::PrepareGraphicsPipeline(PipelineSelection& worker_sel) {
 }
 
 const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& prepared) {
-    if (prepared.state.load(std::memory_order_acquire) != PreparedDraw::Ready ||
-        prepared.reg_checksum != liverpool->gfx_reg_checksum) {
+    const auto miss = [](PrepMiss why) -> const GraphicsPipeline* {
+        ++g_gow3_prep_miss[u32(why)];
         return nullptr;
+    };
+    // gow3: GOW3_PREP_WAIT_US=N: a draw its worker is still preparing is waited for up to N
+    // microseconds (the regular lookup costs the GPU thread more than a short wait).
+    static const auto wait_limit = [] {
+        const char* env = std::getenv("GOW3_PREP_WAIT_US");
+        return std::chrono::microseconds(env ? std::atoi(env) : 0);
+    }();
+    auto state = prepared.state.load(std::memory_order_acquire);
+    if (state == PreparedDraw::Pending && wait_limit.count() > 0) {
+        ++g_gow3_prep_waited;
+        const auto until = std::chrono::steady_clock::now() + wait_limit;
+        for (u32 spins = 1; state == PreparedDraw::Pending; ++spins) {
+            __builtin_ia32_pause();
+            if (!(spins & 63) && std::chrono::steady_clock::now() >= until) {
+                break;
+            }
+            state = prepared.state.load(std::memory_order_acquire);
+        }
+        g_gow3_prep_wait_hits += state == PreparedDraw::Ready;
+    }
+    if (state != PreparedDraw::Ready) {
+        return miss(state == PreparedDraw::Pending ? PrepMiss::Pending : PrepMiss::Unavailable);
+    }
+    if (prepared.reg_checksum != liverpool->gfx_reg_checksum) {
+        return miss(PrepMiss::Checksum);
     }
     // Same registers; the stage programs and their flattened user data (which also covers
     // everything read from guest memory for the specialization) must match as well. This is
@@ -1100,11 +1125,11 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
         const auto& stage = prepared.stages[i];
         const auto* pgm = regs.ProgramForStage(static_cast<u32>(stage.hw_stage));
         if (!pgm || !pgm->Address<u32*>()) {
-            return nullptr;
+            return miss(PrepMiss::Program);
         }
         const auto params = CachedParams(*pgm);
         if (params.hash != stage.hash) {
-            return nullptr;
+            return miss(PrepMiss::Program);
         }
         auto& info = const_cast<Program*>(stage.program)->info;
         info.pgm_base = params.Base();
@@ -1113,11 +1138,11 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
         if (info.pgm_base != stage.pgm_base || info.flattened_ud_buf.size() != stage.flat_size ||
             std::memcmp(info.flattened_ud_buf.data(), stage.flat,
                         stage.flat_size * sizeof(u32)) != 0) {
-            return nullptr;
+            return miss(PrepMiss::Flat);
         }
     }
     const auto it = graphics_pipelines.find(prepared.key);
-    return it != graphics_pipelines.end() ? it->second.get() : nullptr;
+    return it != graphics_pipelines.end() ? it->second.get() : miss(PrepMiss::Pipeline);
 }
 
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params,
