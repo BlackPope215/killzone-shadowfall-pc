@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 #include <boost/container/flat_map.hpp>
@@ -883,12 +885,153 @@ void FlattenExtendedUserdataPass(IR::Program& program) {
 
 } // namespace Shader::Optimization
 
+namespace Shader {
+
+thread_local const SrtOverlay* g_srt_overlay = nullptr;
+
+namespace {
+
+/// Reads `size` bytes of guest memory at `address`, with the overlay's pending writes on top
+/// (later entries win). Called from translated walkers.
+u64 PS4_SYSV_ABI SrtOverlayRead(u64 address, u32 size) {
+    u64 value = 0;
+    std::memcpy(&value, reinterpret_cast<const void*>(address), size);
+    const SrtOverlay* overlay = g_srt_overlay;
+    if (overlay && address + size > overlay->lo && address < overlay->hi) {
+        auto* bytes = reinterpret_cast<u8*>(&value);
+        for (size_t i = 0; i < overlay->count; ++i) {
+            const auto& e = overlay->entries[i];
+            const u64 lo = std::max<u64>(address, e.address);
+            const u64 hi = std::min<u64>(address + size, e.address + e.size);
+            if (lo < hi) {
+                std::memcpy(bytes + (lo - address), e.data + (lo - e.address), hi - lo);
+            }
+        }
+    }
+    return value;
+}
+
+std::mutex g_overlay_mutex;
+Xbyak::CodeGenerator g_overlay_codegen(16_MB);
+std::unordered_map<const void*, PFN_SrtWalker> g_overlay_walkers; ///< null: not translatable
+
+/// `mov dst, [rdi + r10*scale + disp]` (dst rdi or r10d) as a call to SrtOverlayRead. All
+/// caller-saved registers are kept; the result is stored into the saved slot of `dst`.
+void EmitOverlayLoad(Xbyak::CodeGenerator& c, bool has_index, u32 scale, s64 disp, u32 bytes,
+                     int slot) {
+    static constexpr const Xbyak::Reg64* saved[] = {&rax, &rcx, &rdx, &rsi, &rdi,
+                                                    &r8,  &r9,  &r10, &r11};
+    for (const auto* reg : saved) {
+        c.push(*reg);
+    }
+    if (has_index) {
+        c.lea(rdi, ptr[rdi + r10 * int(scale ? scale : 1) + int(disp)]);
+    } else {
+        c.lea(rdi, ptr[rdi + int(disp)]);
+    }
+    c.mov(esi, bytes);
+    c.mov(rax, rsp);
+    c.and_(rsp, -16);
+    c.push(rax);
+    c.push(rax);
+    c.mov(rax, reinterpret_cast<u64>(&SrtOverlayRead));
+    c.call(rax);
+    c.mov(rsp, ptr[rsp]);
+    c.mov(ptr[rsp + (8 - slot) * 8], rax);
+    for (int i = 8; i >= 0; --i) {
+        c.pop(*saved[i]);
+    }
+}
+
+} // namespace
+
+PFN_SrtWalker OverlayWalker(PFN_SrtWalker walker, size_t size) {
+    if (!walker || !size) {
+        return nullptr;
+    }
+    std::scoped_lock lock{g_overlay_mutex};
+    if (const auto it = g_overlay_walkers.find(reinterpret_cast<const void*>(walker));
+        it != g_overlay_walkers.end()) {
+        return it->second;
+    }
+    auto& c = g_overlay_codegen;
+    const size_t start_size = c.getSize();
+    const u8* start = c.getCurr();
+    const auto* code = reinterpret_cast<const u8*>(walker);
+    bool ok = true;
+    try {
+        for (size_t pos = 0; ok && pos < size;) {
+            ZydisDecodedInstruction inst;
+            ZydisDecodedOperand ops[ZYDIS_MAX_OPERAND_COUNT];
+            if (!ZYAN_SUCCESS(Common::Decoder::Instance()->decodeInstruction(
+                    inst, ops, const_cast<u8*>(code + pos), size - pos)) ||
+                (inst.attributes & ZYDIS_ATTRIB_IS_RELATIVE)) {
+                ok = false;
+                break;
+            }
+            const ZydisDecodedOperand* mem = nullptr;
+            for (u32 i = 0; i < inst.operand_count_visible; ++i) {
+                if (ops[i].type == ZYDIS_OPERAND_TYPE_MEMORY) {
+                    mem = &ops[i];
+                }
+            }
+            if (mem && mem->mem.base == ZYDIS_REGISTER_RDI) {
+                // Only loads into rdi (a table pointer) or r10d (a value) exist.
+                if (inst.mnemonic != ZYDIS_MNEMONIC_MOV || mem != &ops[1] ||
+                    ops[0].type != ZYDIS_OPERAND_TYPE_REGISTER ||
+                    (mem->mem.index != ZYDIS_REGISTER_NONE && mem->mem.index != ZYDIS_REGISTER_R10)) {
+                    ok = false;
+                    break;
+                }
+                u32 bytes;
+                int slot;
+                if (ops[0].reg.value == ZYDIS_REGISTER_RDI) {
+                    bytes = 8;
+                    slot = 4;
+                } else if (ops[0].reg.value == ZYDIS_REGISTER_R10D) {
+                    bytes = 4;
+                    slot = 7;
+                } else {
+                    ok = false;
+                    break;
+                }
+                const s64 disp = mem->mem.disp.value; // 0 without a displacement
+                EmitOverlayLoad(c, mem->mem.index != ZYDIS_REGISTER_NONE, mem->mem.scale, disp,
+                                bytes, slot);
+            } else if (mem && mem->mem.base != ZYDIS_REGISTER_RSI) {
+                ok = false; // a memory operand the walker generator never emits
+            } else {
+                c.db(code + pos, inst.length);
+            }
+            pos += inst.length;
+        }
+    } catch (const Xbyak::Error&) {
+        ok = false;
+    }
+    PFN_SrtWalker result = nullptr;
+    if (ok) {
+        c.ready();
+        result = reinterpret_cast<PFN_SrtWalker>(const_cast<u8*>(start));
+    } else {
+        c.setSize(start_size);
+    }
+    g_overlay_walkers.emplace(reinterpret_cast<const void*>(walker), result);
+    return result;
+}
+
+} // namespace Shader
+
 #else
 
 namespace Shader {
 
 PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
     UNREACHABLE_MSG("RegisterWalkerCode unimplemented for target architecture.");
+}
+
+thread_local const SrtOverlay* g_srt_overlay = nullptr;
+PFN_SrtWalker OverlayWalker(PFN_SrtWalker, size_t) {
+    return nullptr;
 }
 
 namespace Optimization {

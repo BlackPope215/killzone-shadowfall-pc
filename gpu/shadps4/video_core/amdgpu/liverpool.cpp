@@ -771,7 +771,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
     Vulkan::DrawPreparation* draw_prep =
         seq != NoSeq && rasterizer ? &rasterizer->GetDrawPreparation() : nullptr;
     if (draw_prep) {
-        draw_prep->BeginSubmission(seq, regs, gfx_reg_checksum);
+        draw_prep->BeginSubmission(seq, regs, gfx_reg_checksum, cblock.constants_heap.data());
     }
     static const bool dcb_stats = EmulatorSettingsImpl::Flag("GOW3_DCB_STATS", false);
     const int dcb_depth = g_dcb_depth;
@@ -1810,7 +1810,7 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
     // The copy for the draw preparation workers is made before taking the queue lock, which
     // the GPU thread needs to pick up work.
     auto* draw_prep = rasterizer ? &rasterizer->GetDrawPreparation() : nullptr;
-    auto prep_submission = draw_prep ? draw_prep->Build(dcb) : nullptr;
+    auto prep_submission = draw_prep ? draw_prep->Build(dcb, ccb) : nullptr;
     {
         // Numbering, enqueueing and queueing under one lock keep the three orders identical.
         std::scoped_lock lock{queue.m_access};

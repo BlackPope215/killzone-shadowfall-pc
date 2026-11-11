@@ -1659,7 +1659,22 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
             return {};
         }
         runtime_fault_recover = &recover;
-        info.RefreshFlatBuf();
+        // gow3: with constant engine dumps the GPU thread has not done yet (vk_draw_prep.cpp
+        // CeSim), the tables are walked through them: the data the GPU thread will see.
+        if (Shader::g_srt_overlay && info.srt_info.walker_func) {
+            thread_local std::unordered_map<const void*, Shader::PFN_SrtWalker> overlay_walkers;
+            const void* key = reinterpret_cast<const void*>(info.srt_info.walker_func);
+            auto it = overlay_walkers.find(key);
+            if (it == overlay_walkers.end()) {
+                it = overlay_walkers
+                         .emplace(key, Shader::OverlayWalker(info.srt_info.walker_func,
+                                                             info.srt_info.walker_func_size))
+                         .first;
+            }
+            info.RefreshFlatBufWith(it->second ? it->second : info.srt_info.walker_func);
+        } else {
+            info.RefreshFlatBuf();
+        }
         auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
         runtime_fault_recover = nullptr;
         const auto it = std::ranges::find(program->modules, spec, &Program::Module::spec);
