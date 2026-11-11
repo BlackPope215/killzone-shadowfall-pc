@@ -33,6 +33,7 @@
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_shader_skip.h"
+#include "video_core/renderer_vulkan/vk_streamout_diag.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "gow3_threads.h"
 #include "video_core/renderer_vulkan/vk_feedback_copy.h"
@@ -988,6 +989,10 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
             continue;
         }
         const u64 size = memory->ClampRangeSize(address, vsharp.GetSize());
+        if (StreamoutDiag::On()) {
+            StreamoutDiag::CheckRead(address, size, stage.pgm_hash, u64(stage.sw_stage),
+                                     desc.is_written ? "written buffer" : "buffer");
+        }
         if (desc.is_written) {
             NotePendingGpuWrite(address, size);
             continue;
