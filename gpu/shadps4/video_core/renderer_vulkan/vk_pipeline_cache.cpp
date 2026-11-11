@@ -1084,7 +1084,13 @@ bool PipelineCache::PrepareGraphicsPipeline(PipelineSelection& worker_sel) {
     if (worker_sel.regs->stage_enable.hs_en) {
         return false;
     }
-    return RefreshGraphicsKey(worker_sel) && !worker_sel.worker->failed;
+    g_gow3_fail_line = 0;
+    const bool ok = RefreshGraphicsKey(worker_sel) && !worker_sel.worker->failed;
+    if (!ok) {
+        // gow3: GOW3_FRAME_STATS: where workers give up (vk_draw_prep.cpp prints the top lines).
+        ++g_gow3_prep_fail_lines[u32(g_gow3_fail_line) % g_gow3_prep_fail_lines.size()];
+    }
+    return ok;
 }
 
 const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& prepared) {
@@ -1138,6 +1144,7 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
         if (info.pgm_base != stage.pgm_base || info.flattened_ud_buf.size() != stage.flat_size ||
             std::memcmp(info.flattened_ud_buf.data(), stage.flat,
                         stage.flat_size * sizeof(u32)) != 0) {
+            ++g_gow3_prep_flat_stage[u32(stage.hw_stage) % g_gow3_prep_flat_stage.size()];
             return miss(PrepMiss::Flat);
         }
     }
@@ -1632,6 +1639,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         std::shared_lock lk{programs_mutex};
         const auto found_program = program_cache.find(params.hash);
         if (found_program == program_cache.end() || !found_program->second->info_template) {
+            g_gow3_fail_line = __LINE__; // worker: program not translated yet
             worker.failed = true;
             return {};
         }
@@ -1646,6 +1654,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         // thread. A jump out of the specialization leaks its partial allocations (rare).
         sigjmp_buf recover;
         if (sigsetjmp(recover, 0)) {
+            g_gow3_fail_line = __LINE__; // worker: guest memory fault in the specialization
             worker.failed = true;
             return {};
         }
@@ -1655,6 +1664,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         runtime_fault_recover = nullptr;
         const auto it = std::ranges::find(program->modules, spec, &Program::Module::spec);
         if (it == program->modules.end()) {
+            g_gow3_fail_line = __LINE__; // worker: no compiled permutation matches
             worker.failed = true;
             return {};
         }
