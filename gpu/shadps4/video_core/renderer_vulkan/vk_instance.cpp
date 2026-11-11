@@ -20,6 +20,7 @@
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
+#include "video_core/renderer_vulkan/vk_stream_out.h"
 
 #include <vk_mem_alloc.h>
 
@@ -385,6 +386,23 @@ bool Instance::CreateDevice() {
                     fragment_shader_barycentric ? "VK_KHR_fragment_shader_barycentric" : "none");
     }
     provoking_vertex = add_extension(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME);
+    // gow3 (stream-out): GCN stream-out through transform feedback (vk_stream_out.h).
+    if (StreamOutWanted() && features.geometryShader &&
+        std::any_of(available_extensions.begin(), available_extensions.end(),
+                    [](const std::string& name) {
+                        return name == VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME;
+                    })) {
+        const auto chain = physical_device.getFeatures2<
+            vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceTransformFeedbackFeaturesEXT>();
+        transform_feedback =
+            chain.get<vk::PhysicalDeviceTransformFeedbackFeaturesEXT>().transformFeedback &&
+            add_extension(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME);
+    }
+    std::printf("Stream-out: %s\n",
+                transform_feedback ? "on (VK_EXT_transform_feedback)"
+                : !StreamOutWanted() ? "off (GOW3_STREAMOUT=0): such draws are skipped"
+                                     : "unavailable (no VK_EXT_transform_feedback): such draws "
+                                       "are skipped");
     shader_stencil_export = add_extension(VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME);
     image_load_store_lod = add_extension(VK_AMD_SHADER_IMAGE_LOAD_STORE_LOD_EXTENSION_NAME);
     amd_gcn_shader = !amd_paths_off.shaderext && add_extension(VK_AMD_GCN_SHADER_EXTENSION_NAME);
@@ -717,6 +735,9 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceProvokingVertexFeaturesEXT{
             .provokingVertexLast = true,
         },
+        vk::PhysicalDeviceTransformFeedbackFeaturesEXT{
+            .transformFeedback = true, // gow3 (stream-out)
+        },
         vk::PhysicalDeviceVertexAttributeDivisorFeatures{
             .vertexAttributeInstanceRateDivisor = true,
         },
@@ -809,6 +830,9 @@ bool Instance::CreateDevice() {
     }
     if (!provoking_vertex) {
         device_chain.unlink<vk::PhysicalDeviceProvokingVertexFeaturesEXT>();
+    }
+    if (!transform_feedback) {
+        device_chain.unlink<vk::PhysicalDeviceTransformFeedbackFeaturesEXT>();
     }
     if (!maintenance_5) {
         device_chain.unlink<vk::PhysicalDeviceMaintenance5FeaturesKHR>();

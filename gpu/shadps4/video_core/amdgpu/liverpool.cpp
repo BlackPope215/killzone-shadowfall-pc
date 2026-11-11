@@ -1405,32 +1405,12 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             }
             case PM4ItOpcode::StrmoutBufferUpdate: {
                 const auto* strmout = reinterpret_cast<const PM4CmdStrmoutBufferUpdate*>(header);
-                // gow3: the stream-out buffer offsets (bytes) the packet sets, reads or stores.
-                // Stream out itself is not run (GOW3_GS_FEATURES), so a buffer's filled size is
-                // the offset it was given; a store writes that, as the hardware writes its
-                // filled size, so code that reads it back gets a consistent value.
-                const u32 buffer = strmout->buffer_select.Value();
-                switch (strmout->source_select.Value()) {
-                case SourceSelect::BufferOffset:
-                    streamout_offsets[buffer] = strmout->buffer_offset;
-                    break;
-                case SourceSelect::SrcAddress:
-                    streamout_offsets[buffer] = *strmout->SrcAddress<const u32*>();
-                    break;
-                case SourceSelect::VgtStrmoutBufferFilledSize:
-                case SourceSelect::None:
-                    break;
+                // gow3 (stream-out): the offsets live on the GPU (vk_stream_out.h). Not a
+                // pipelined packet: the draw recording thread has run dry here.
+                if (rasterizer) {
+                    rasterizer->StreamOutBufferUpdate(*strmout);
                 }
-                if (strmout->update_memory.Value()) {
-                    *strmout->DstAddress<u32*>() = streamout_offsets[buffer];
-                }
-                static std::once_flag strmout_logged;
-                std::call_once(strmout_logged, [&] {
-                    std::printf("GPU: STRMOUT_BUFFER_UPDATE handled (buffer %u, source %u, store %u); "
-                                "stream out itself is not run\n",
-                                buffer, u32(strmout->source_select.Value()),
-                                u32(strmout->update_memory.Value()));
-                });
+                regs.cp_strmout_cntl.offset_update_done = 1;
                 break;
             }
             case PM4ItOpcode::GetLodStats: {

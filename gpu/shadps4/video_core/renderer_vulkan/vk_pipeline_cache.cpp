@@ -44,6 +44,7 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "video_core/renderer_vulkan/vk_streamout_diag.h"
+#include "video_core/renderer_vulkan/vk_stream_out.h"
 
 namespace Vulkan {
 
@@ -284,6 +285,16 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         info.hw.gs.in_vertex_data_size = regs.vgt_esgs_ring_itemsize;
         info.hw.gs.out_vertex_data_size = regs.vgt_gs_vert_itemsize[0];
         info.hw.gs.mode = regs.vgt_gs_mode.mode;
+        // gow3 (stream-out): what stream 0 writes, as StreamOut::Prepare binds it.
+        if (regs.vgt_strmout_config.raw && instance.IsTransformFeedbackSupported() &&
+            StreamOutHandled(regs)) {
+            info.hw.gs.xfb_buffer_mask = regs.vgt_strmout_buffer_config.stream_0_buf_en;
+            for (u32 b = 0; b < 4; ++b) {
+                info.hw.gs.xfb_strides[b] = (info.hw.gs.xfb_buffer_mask >> b) & 1
+                                                ? regs.vgt_strmout_buffers[b].vtx_stride
+                                                : 0;
+            }
+        }
         const auto params_vc = AmdGpu::GetParams(regs.vs_program);
         info.hw.gs.vs_copy = params_vc.code;
         info.hw.gs.vs_copy_hash = params_vc.hash;
@@ -1775,6 +1786,24 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
     sel.compilation_pending = false;
     sel.pending_program = nullptr;
     g_gow3_gs_reject = {};
+    // gow3 (stream-out): stream 0 through transform feedback (vk_stream_out.h), once its copy
+    // shader parsed; on-chip GS and other stream-out setups are still refused. A draw
+    // preparation worker without a verdict leaves the draw to the GPU thread.
+    bool gs_undecided = false;
+    const auto gs_unsupported = [&] {
+        if (regs.vgt_gs_mode.onchip) {
+            return true;
+        }
+        if (!regs.vgt_strmout_config.raw) {
+            return false;
+        }
+        if (!instance.IsTransformFeedbackSupported() || !StreamOutHandled(regs)) {
+            return true;
+        }
+        const auto usable = StreamOutPipelineUsable(regs, sel.worker != nullptr);
+        gs_undecided = !usable.has_value();
+        return !usable.value_or(false);
+    };
     const auto note_gs_reject = [&] {
         const auto address = [&](HwStage stage) -> u64 {
             const auto* pgm = regs.ProgramForStage(static_cast<u32>(stage));
@@ -1834,7 +1863,11 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
             LOG_WARNING(Render_Vulkan, "Geometry shader stage unsupported, skipping");
             { g_gow3_fail_line = __LINE__; return false; }
         }
-        if ((regs.vgt_gs_mode.onchip || regs.vgt_strmout_config.raw) && !GsFeaturesAllowed(regs)) {
+        if (gs_unsupported()) {
+            if (gs_undecided) {
+                sel.worker->failed = true;
+                { g_gow3_fail_line = __LINE__; return false; }
+            }
             LOG_WARNING(Render_Vulkan, "Geometry shader features unsupported, skipping");
             note_gs_reject();
             { g_gow3_fail_line = __LINE__; return false; }
@@ -1868,7 +1901,11 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
             LOG_WARNING(Render_Vulkan, "Geometry shader stage unsupported, skipping");
             { g_gow3_fail_line = __LINE__; return false; }
         }
-        if ((regs.vgt_gs_mode.onchip || regs.vgt_strmout_config.raw) && !GsFeaturesAllowed(regs)) {
+        if (gs_unsupported()) {
+            if (gs_undecided) {
+                sel.worker->failed = true;
+                { g_gow3_fail_line = __LINE__; return false; }
+            }
             LOG_WARNING(Render_Vulkan, "Geometry shader features unsupported, skipping");
             note_gs_reject();
             { g_gow3_fail_line = __LINE__; return false; }
