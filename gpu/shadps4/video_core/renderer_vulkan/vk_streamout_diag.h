@@ -111,7 +111,7 @@ inline void Describe(const AmdGpu::Regs& regs) {
             inst.opcode <= Shader::Gcn::Opcode::S_LOAD_DWORDX16) {
             const auto& smrd = inst.control.smrd;
             std::printf(" smrd off %u imm %u", u32(smrd.offset), u32(smrd.imm));
-            const u32 sbase = inst.src[0].code;
+            const u32 sbase = inst.src[0].code * 2; // the SBASE field counts register pairs
             if (smrd.imm && sbase + 1 < 16) {
                 const VAddr table = (VAddr(vs.user_data[sbase]) |
                                      (VAddr(vs.user_data[sbase + 1]) << 32)) &
