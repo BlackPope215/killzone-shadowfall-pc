@@ -40,6 +40,7 @@
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/renderer_vulkan/vk_streamout_diag.h"
 
 namespace Vulkan {
 
@@ -366,6 +367,9 @@ bool GsFeaturesAllowed(const AmdGpu::Regs& regs) {
                         u32(*reinterpret_cast<const u16*>(&regs.vgt_strmout_buffer_config)),
                         allowed ? "drawn" : "skipped");
         }
+    }
+    if (!allowed && enabled) {
+        StreamoutDiag::Describe(regs);
     }
     return allowed;
 }
