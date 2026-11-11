@@ -522,8 +522,18 @@ void EmitContext::DefineInputs() {
         gl_in = Name(DefineVar(vertices_in, spv::StorageClass::Input), "gl_in");
         interfaces.push_back(gl_in);
 
-        const auto num_params = runtime_info.hw.gs.in_vertex_data_size / 4 - 1u;
-        for (int param_id = 0; param_id < num_params; ++param_id) {
+        // gow3: only the parameters this shader reads are declared. The ring item size counts
+        // every dword the vertex stage may write, and an input with no output in the previous
+        // stage is invalid (VUID-RuntimeSpirv-OpEntryPoint-08743): Killzone's stream-out
+        // pipeline, whose vertex stage writes a position only, was lost by the AMD driver.
+        // An item smaller than one vec4 has no parameters (the subtraction wrapped).
+        const u32 item_vec4s = runtime_info.hw.gs.in_vertex_data_size / 4;
+        const u32 num_params =
+            std::min<u32>(item_vec4s ? item_vec4s - 1u : 0u, u32(input_params.size()));
+        for (u32 param_id = 0; param_id < num_params; ++param_id) {
+            if (!info.loads.GetAny(IR::Attribute::Param0 + param_id)) {
+                continue;
+            }
             const Id type{TypeArray(F32[4], ConstU32(num_verts_in))};
             const Id id{DefineInput(type, param_id)};
             Name(id, fmt::format("gs_in_attr{}", param_id));
