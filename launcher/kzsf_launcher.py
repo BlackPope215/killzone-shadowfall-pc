@@ -788,10 +788,10 @@ RESTART_CODE = 75  # the game's exit code for "Apply and restart" (src/probe.c r
 PORT_OUTPUTS = {'1440p': '2560x1440', '1800p': '3200x1800', '4K': '3840x2160'}
 WINDOW_SIZES = ('1280x720', '1600x900', '1920x1080', '2560x1440', '3840x2160')
 DISPLAY_MODES = ('windowed', 'borderless', 'fullscreen')
-FPS_LIMITS = ('30', '60', '144', '240', '0')
+FPS_LIMITS = ('30', '60', '72', '90', '100', '120', '144', '240', '0')
 # Above 60 the game is not vblank paced: vblank runs at 480 Hz and the present thread caps the rate
 # (GOW3_FPS_LIMIT). The engine measures frame time with the guest TSC, so game speed is unchanged.
-EXPERIMENTAL_FPS = ('144', '240', '0')
+EXPERIMENTAL_FPS = ('72', '90', '100', '120', '144', '240', '0')
 RENDER_RESOLUTIONS = ('720p', 'native', '1440p', '1800p', '4K')  # patches/Killzone_Shadow_Fall.xml
 ANISOTROPY = ('0', '2', '4', '8', '16')
 MIP_BIASES = ('-2.0', '-1.0', '-0.5', '0', '0.5', '1.0', '2.0')
@@ -1719,8 +1719,8 @@ class Launcher:
                     [tr('ultrawide_off')] + [f"{s.replace('x', ' × ')} · {aspects[s]}" for s in ULTRAWIDE[1:]],
                     ultrawide, set_ultrawide, tr('ultrawide_help'))
         self.choice(parent, tr('fps_limit'), FPS_LIMITS,
-                    ['30 FPS', '60 FPS', f"144 FPS ({tr('fps_experimental')})",
-                     f"240 FPS ({tr('fps_experimental')})", tr('fps_unlimited')],
+                    ['30 FPS', '60 FPS'] + [f"{v} FPS ({tr('fps_experimental')})" for v in FPS_LIMITS[2:-1]]
+                    + [tr('fps_unlimited')],
                     self.graphics['fps_limit'], lambda v: self.set_graphic('fps_limit', v), tr('fps_limit_help'))
         frame_gen = self.settings.get('frame_gen') if self.settings.get('frame_gen') in FRAME_GENS else 'off'
 
