@@ -4679,7 +4679,25 @@ void Rasterizer::UpdatePrimitiveState(const bool is_indexed) const {
     const auto front_face = LiverpoolToVK::FrontFace(regs.polygon_control.front_face);
 
     dynamic_state.SetPrimitiveRestartEnabled(prim_restart);
-    dynamic_state.SetRasterizerDiscardEnabled(regs.clipper_control.dx_rasterization_kill);
+    // gow3 (stream-out): Killzone's stream-out draw has no pixel shader: it only captures the
+    // geometry shader's triangles. Rasterizing them into the bound scene targets without a
+    // fragment stage lost the device on AMD (with or without the capture); nothing is meant to
+    // be drawn, so the rasterizer is off for such draws. GOW3_STREAMOUT_DISCARD=0: as before.
+    static const bool streamout_discard = [] {
+        const char* env = std::getenv("GOW3_STREAMOUT_DISCARD");
+        return !(env && env[0] == '0');
+    }();
+    const bool capture_only = streamout_discard && regs.vgt_strmout_config.raw != 0 &&
+                              regs.ps_program.Address<u32*>() == nullptr;
+    if (capture_only) {
+        static bool logged = false;
+        if (!std::exchange(logged, true)) {
+            std::printf("Stream-out: draws without a pixel shader capture only (rasterizer off)\n");
+            std::fflush(stdout);
+        }
+    }
+    dynamic_state.SetRasterizerDiscardEnabled(regs.clipper_control.dx_rasterization_kill ||
+                                              capture_only);
     dynamic_state.SetCullMode(cull_mode);
     dynamic_state.SetFrontFace(front_face);
 }
