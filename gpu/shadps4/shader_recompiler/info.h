@@ -238,11 +238,16 @@ struct Info : InfoPersistent {
     }
 
     void RefreshFlatBuf() {
+        RefreshFlatBufWith(srt_info.walker_func);
+    }
+
+    /// gow3: with another walker of the same tables (draw preparation: OverlayWalker).
+    void RefreshFlatBufWith(PFN_SrtWalker walker) {
         flattened_ud_buf.resize(srt_info.flattened_bufsize_dw);
         ASSERT(user_data.size() <= NUM_USER_DATA_REGS);
         std::memcpy(flattened_ud_buf.data(), user_data.data(), user_data.size_bytes());
-        if (srt_info.walker_func) {
-            srt_info.walker_func(user_data.data(), flattened_ud_buf.data());
+        if (walker) {
+            walker(user_data.data(), flattened_ud_buf.data());
         }
     }
 
