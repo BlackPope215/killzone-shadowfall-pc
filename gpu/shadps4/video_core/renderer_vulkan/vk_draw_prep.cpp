@@ -500,6 +500,16 @@ void DrawPreparation::Count(bool was_used) {
                 "%llu scanner rebases)\n",
                 static_cast<unsigned long long>(used), static_cast<unsigned long long>(unused),
                 worker_count, static_cast<unsigned long long>(rebases));
+    const auto& m = g_gow3_prep_miss;
+    std::printf("Draw preparation misses: pending %llu, unavailable %llu, registers %llu, "
+                "program %llu, user data %llu, pipeline %llu, not prepared %llu; "
+                "waited for %llu (%llu became ready)\n",
+                (unsigned long long)m[0], (unsigned long long)m[1], (unsigned long long)m[2],
+                (unsigned long long)m[3], (unsigned long long)m[4], (unsigned long long)m[5],
+                (unsigned long long)m[6], (unsigned long long)g_gow3_prep_waited,
+                (unsigned long long)g_gow3_prep_wait_hits);
+    g_gow3_prep_miss.fill(0);
+    g_gow3_prep_waited = g_gow3_prep_wait_hits = 0;
     used = unused = 0;
 }
 
