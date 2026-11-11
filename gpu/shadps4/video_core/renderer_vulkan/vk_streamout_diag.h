@@ -22,6 +22,19 @@
 
 namespace Vulkan::StreamoutDiag {
 
+// vk_streamout_watch.cpp: CPU accesses to the stream-out buffer (guard page).
+void WatchArm(VAddr begin, VAddr end);
+void WatchReport();
+
+inline VAddr& WatchBegin() {
+    static VAddr v = 0;
+    return v;
+}
+inline VAddr& WatchEnd() {
+    static VAddr v = 0;
+    return v;
+}
+
 inline bool On() {
     static const bool on = [] {
         const char* env = std::getenv("GOW3_STREAMOUT_DIAG");
@@ -54,7 +67,11 @@ inline void Rate() {
     static auto window = std::chrono::steady_clock::now();
     ++skipped;
     const auto now = std::chrono::steady_clock::now();
-    if (now - window >= std::chrono::seconds(10)) {
+    const bool report = now - window >= std::chrono::seconds(10);
+    if (!report && WatchBegin()) {
+        WatchArm(WatchBegin(), WatchEnd()); // re-arm: a guard fires once
+    }
+    if (report) {
         std::printf("GPU: stream-out: %.1f skipped pipeline selections per second\n",
                     double(skipped) / std::chrono::duration<double>(now - window).count());
         // What the buffers hold now (nothing writes them while stream out is skipped, unless
@@ -67,6 +84,10 @@ inline void Rate() {
             std::printf("  buffer %llx now: (%g %g %g %g) (%g %g %g %g) (%g %g %g %g)\n",
                         static_cast<unsigned long long>(r.begin), f[0], f[1], f[2], f[3], f[4],
                         f[5], f[6], f[7], f[8], f[9], f[10], f[11]);
+        }
+        if (WatchBegin()) {
+            WatchReport();
+            WatchArm(WatchBegin(), WatchEnd());
         }
         skipped = 0;
         window = now;
@@ -140,6 +161,11 @@ inline void Describe(const AmdGpu::Regs& regs) {
                                               u64(1) << 20);
                     if (stride && stride == ra[0xA2B5] * 4 && ra[0xA2B4]) {
                         bytes = u64(ra[0xA2B4]) * 4; // stream-out buffer 0: its real size
+                        WatchBegin() = addr;
+                        WatchEnd() = addr + bytes;
+                        std::printf("  watching CPU accesses to %llx..%llx\n",
+                                    static_cast<unsigned long long>(addr),
+                                    static_cast<unsigned long long>(addr + bytes));
                     }
                     std::printf(" -> V# %llx stride %u records %u (%llu bytes)",
                                 static_cast<unsigned long long>(addr), stride, records,
