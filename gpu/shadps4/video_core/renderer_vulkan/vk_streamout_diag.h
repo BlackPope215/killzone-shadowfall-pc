@@ -57,6 +57,17 @@ inline void Rate() {
     if (now - window >= std::chrono::seconds(10)) {
         std::printf("GPU: stream-out: %.1f skipped pipeline selections per second\n",
                     double(skipped) / std::chrono::duration<double>(now - window).count());
+        // What the buffers hold now (nothing writes them while stream out is skipped, unless
+        // the game itself does): the first vertices as floats.
+        for (const auto& r : Ranges()) {
+            if (!Core::Memory::Instance()->IsValidGpuMapping(r.begin, 64)) {
+                continue;
+            }
+            const auto* f = reinterpret_cast<const float*>(r.begin);
+            std::printf("  buffer %llx now: (%g %g %g %g) (%g %g %g %g) (%g %g %g %g)\n",
+                        static_cast<unsigned long long>(r.begin), f[0], f[1], f[2], f[3], f[4],
+                        f[5], f[6], f[7], f[8], f[9], f[10], f[11]);
+        }
         skipped = 0;
         window = now;
     }
@@ -125,8 +136,11 @@ inline void Describe(const AmdGpu::Regs& regs) {
                     const VAddr addr = VAddr(vsharp[0]) | (VAddr(vsharp[1] & 0xFFF) << 32);
                     const u32 stride = (vsharp[1] >> 16) & 0x3FFF;
                     const u32 records = vsharp[2];
-                    const u64 bytes = std::min<u64>(u64(records) * (stride ? stride : 1),
-                                                    u64(1) << 20);
+                    u64 bytes = std::min<u64>(u64(records) * (stride ? stride : 1),
+                                              u64(1) << 20);
+                    if (stride && stride == ra[0xA2B5] * 4 && ra[0xA2B4]) {
+                        bytes = u64(ra[0xA2B4]) * 4; // stream-out buffer 0: its real size
+                    }
                     std::printf(" -> V# %llx stride %u records %u (%llu bytes)",
                                 static_cast<unsigned long long>(addr), stride, records,
                                 static_cast<unsigned long long>(bytes));
