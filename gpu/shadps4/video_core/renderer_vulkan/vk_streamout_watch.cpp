@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 
 #include "common/types.h"
@@ -33,6 +34,8 @@ struct Hit {
     u32 kind; // 0 read, 1 write
     u32 count;
     DWORD thread;
+    u8 code[192];     ///< the code around rip (rip - 128 .. rip + 64), for disassembly
+    u64 regs[16];     ///< rax rcx rdx rbx rsp rbp rsi rdi r8..r15 at the first access
 };
 constexpr u32 MaxHits = 32;
 Hit hits[MaxHits];
@@ -68,7 +71,16 @@ LONG CALLBACK GuardHandler(EXCEPTION_POINTERS* info) {
     if (n < MaxHits) {
         MEMORY_BASIC_INFORMATION mbi{};
         VirtualQuery(reinterpret_cast<void*>(rip), &mbi, sizeof(mbi));
-        hits[n] = {rip, u64(mbi.AllocationBase), address, kind, 1, GetCurrentThreadId()};
+        auto& h = hits[n];
+        h = {rip, u64(mbi.AllocationBase), address, kind, 1, GetCurrentThreadId(), {}, {}};
+        const u64 from = rip - 128;
+        if (mbi.AllocationBase && from >= u64(mbi.AllocationBase)) {
+            std::memcpy(h.code, reinterpret_cast<const void*>(from), sizeof(h.code));
+        }
+        const CONTEXT* c = info->ContextRecord;
+        const u64 r[16] = {c->Rax, c->Rcx, c->Rdx, c->Rbx, c->Rsp, c->Rbp, c->Rsi, c->Rdi,
+                           c->R8,  c->R9,  c->R10, c->R11, c->R12, c->R13, c->R14, c->R15};
+        std::memcpy(h.regs, r, sizeof(r));
         num_hits.store(n + 1, std::memory_order_release);
     }
     return EXCEPTION_CONTINUE_EXECUTION;
@@ -107,6 +119,24 @@ void WatchReport() {
                     h.base == self ? "port" : "alloc", static_cast<unsigned long long>(h.rip - h.base),
                     h.count, static_cast<unsigned long long>(h.address),
                     static_cast<unsigned long>(h.thread));
+        static bool dumped[MaxHits] = {};
+        if (!dumped[i] && h.base != self) {
+            dumped[i] = true;
+            std::printf("    code at %llx (rip-128..rip+64):", static_cast<unsigned long long>(h.rip - 128));
+            for (u32 b = 0; b < sizeof(h.code); ++b) {
+                std::printf("%s%02x", b % 32 ? "" : "\n      code ", h.code[b]);
+            }
+            std::printf("\n      regs rax %llx rcx %llx rdx %llx rbx %llx rsp %llx rbp %llx rsi %llx "
+                        "rdi %llx r8 %llx r9 %llx r10 %llx r11 %llx r12 %llx r13 %llx r14 %llx r15 %llx\n",
+                        (unsigned long long)h.regs[0], (unsigned long long)h.regs[1],
+                        (unsigned long long)h.regs[2], (unsigned long long)h.regs[3],
+                        (unsigned long long)h.regs[4], (unsigned long long)h.regs[5],
+                        (unsigned long long)h.regs[6], (unsigned long long)h.regs[7],
+                        (unsigned long long)h.regs[8], (unsigned long long)h.regs[9],
+                        (unsigned long long)h.regs[10], (unsigned long long)h.regs[11],
+                        (unsigned long long)h.regs[12], (unsigned long long)h.regs[13],
+                        (unsigned long long)h.regs[14], (unsigned long long)h.regs[15]);
+        }
     }
 }
 
