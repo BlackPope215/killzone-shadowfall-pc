@@ -16,7 +16,7 @@ inline constexpr std::array<const char*, DisplayModeCount> DisplayModeNames = {
     "Windowed", "Borderless", "Fullscreen"};
 
 /// Present rate limits; 0 = unlimited.
-inline constexpr std::array<int, 6> FpsLimits = {30, 60, 120, 144, 240, 0};
+inline constexpr std::array<int, 9> FpsLimits = {30, 60, 72, 90, 100, 120, 144, 240, 0};
 
 /// Game patch suffixes ("Resolution Patch - <name>"); "native" is no resolution patch.
 inline constexpr std::array<std::string_view, 6> Resolutions = {"native", "480p", "720p",
