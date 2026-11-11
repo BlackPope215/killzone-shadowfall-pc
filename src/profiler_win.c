@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include "compat_win.h"
+#include "runtime.h"
 
 enum { MAX_THREADS = 96, MAX_FRAMES = 16, KEY_FRAMES = 8, STACKS = 256, TOP = 6 };
 typedef struct { uintptr_t frame[MAX_FRAMES]; int depth; } Stack;
@@ -47,6 +48,7 @@ static int thread_count;
 static FILE *report;
 static ProfilerDescribe describe;
 static uintptr_t ntdll_base, ntdll_end;
+static volatile unsigned walk_faults;
 
 typedef LONG (NTAPI *QueryThread)(HANDLE, int, void *, ULONG, ULONG *);
 typedef struct { LONG status; void *teb; uintptr_t pid, tid; uintptr_t affinity; LONG prio, base; } ThreadBasic;
@@ -244,6 +246,7 @@ static int by_count(const void *a, const void *b) {
 
 static void write_report(uint64_t window_ms, unsigned round) {
     fprintf(report, "==== window %u (%" PRIu64 " ms) ====\n", round, window_ms);
+    if (walk_faults) fprintf(report, "(%u samples dropped: fault in the stack walk)\n", walk_faults);
     for (int i = 0; i < thread_count; ++i) {
         ThreadInfo *t = &threads[i];
         if (!t->samples) continue;
@@ -290,7 +293,20 @@ static DWORD WINAPI profiler_main(void *unused) {
             if (!t->live || SuspendThread(t->handle) == (DWORD)-1) continue;
             CONTEXT c = {.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER};
             Stack s = {.depth = 0};
-            if (GetThreadContext(t->handle, &c)) walk(t, &c, &s);
+            if (GetThreadContext(t->handle, &c)) {
+                /* A stack walk can leave the stack it started on (runtime-generated code keeps
+                 * no frame pointers): a fault in it drops the sample instead of ending the game
+                 * (the fault handler returns here, runtime_fault_recover). */
+                sigjmp_buf recover;
+                if (sigsetjmp(recover, 0) == 0) {
+                    runtime_fault_recover = &recover;
+                    walk(t, &c, &s);
+                    runtime_fault_recover = NULL;
+                } else {
+                    s.depth = 0;
+                    ++walk_faults;
+                }
+            }
             ResumeThread(t->handle);
             if (s.depth) record(t, &s);
         }
