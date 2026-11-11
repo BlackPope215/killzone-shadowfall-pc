@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
+#include <array>
 #include <optional>
 
 #include <functional>
@@ -56,6 +57,8 @@ struct Program {
     Shader::Info info;
     ModuleList modules{};
     size_t last_used = 0; ///< gow3: permutation of the previous lookup, compared first
+    /// gow3: permutations matched before last_used, newest first (GOW3_PERM_MRU).
+    std::array<u16, 6> recent{0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff};
     /// gow3: GOW3_SPEC_REUSE: the inputs of the last matched lookup (flattened user data,
     /// runtime info, binding start). The specialization is a function of them, so the same
     /// inputs select the same permutation without building and comparing a specialization.

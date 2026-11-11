@@ -34,6 +34,7 @@
 #include "video_core/renderer_vulkan/vk_depth_stencil_state.h"
 #include "video_core/renderer_vulkan/motion_history.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
+#include "video_core/renderer_vulkan/vk_pending_draws.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_amd_paths.h"
 #include "video_core/renderer_vulkan/vk_lighting_test.h"
@@ -43,6 +44,58 @@
 #include "video_core/renderer_vulkan/vk_streamout_diag.h"
 
 namespace Vulkan {
+
+namespace {
+// gow3: AmdGpu::GetParams looks for the shader's binary info ("OrbShdr" footer) by comparing
+// a signature at every dword of the code: ~9% of the GPU command thread in Killzone, since every
+// draw does it for each stage, twice with a prepared draw. The footer's place is remembered per
+// code address for the frame (GOW3_PARAMS_CACHE=0: search every time). A new frame forgets it,
+// so a shader loaded later at the same address is searched again; within a frame the address
+// still holds the code the GPU is drawing with.
+template <typename ShaderProgramT>
+Shader::ShaderParams CachedParams(const ShaderProgramT& pgm) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("GOW3_PARAMS_CACHE");
+        return !(env && env[0] == '0');
+    }();
+    const auto* code = pgm.template Address<u32*>();
+    constexpr u32 token_mov_vcchi = 0xBEEB03FF; // the footer's offset is in the code
+    if (!enabled || code[0] == token_mov_vcchi) {
+        return AmdGpu::GetParams(pgm);
+    }
+    struct Entry {
+        const u32* code;
+        u32 first;
+        u32 offset;
+    };
+    static constexpr size_t Entries = 2048;
+    thread_local std::array<Entry, Entries> entries{};
+    thread_local u64 epoch = ~u64{0};
+    const u64 flips = gow3_flip_count.load(std::memory_order_relaxed);
+    if (flips != epoch) {
+        entries.fill({});
+        epoch = flips;
+    }
+    const auto address = reinterpret_cast<uintptr_t>(code);
+    auto& entry = entries[((address >> 8) ^ (address >> 19)) & (Entries - 1)];
+    const AmdGpu::BinaryInfo* info = nullptr;
+    if (entry.code == code && entry.first == code[0]) {
+        const auto* candidate = reinterpret_cast<const AmdGpu::BinaryInfo*>(code + entry.offset);
+        if (candidate->Valid()) {
+            info = candidate;
+        }
+    }
+    if (!info) {
+        info = &AmdGpu::SearchBinaryInfo(code);
+        entry = {code, code[0], u32(reinterpret_cast<const u32*>(info) - code)};
+    }
+    return {
+        .user_data = pgm.user_data,
+        .code = std::span{code, info->length / sizeof(u32)},
+        .hash = info->shader_hash,
+    };
+}
+} // namespace
 
 using Shader::HwStage;
 using Shader::Output;
@@ -1049,7 +1102,7 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
         if (!pgm || !pgm->Address<u32*>()) {
             return nullptr;
         }
-        const auto params = AmdGpu::GetParams(*pgm);
+        const auto params = CachedParams(*pgm);
         if (params.hash != stage.hash) {
             return nullptr;
         }
@@ -1384,7 +1437,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
             { g_gow3_fail_line = __LINE__; return false; }
         }
 
-        const auto params = AmdGpu::GetParams(*pgm);
+        const auto params = CachedParams(*pgm);
         std::optional<Shader::Gcn::FetchShaderData> fetch_shader_;
         std::tie(sel.infos[stage_out_idx], sel.modules[stage_out_idx], fetch_shader_,
                  key.stage_hashes[stage_out_idx]) =
@@ -1499,7 +1552,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
 bool PipelineCache::RefreshComputeKey() {
     Shader::Backend::Bindings binding{};
     const auto& cs_pgm = liverpool->GetCsRegs();
-    const auto cs_params = AmdGpu::GetParams(cs_pgm);
+    const auto cs_params = CachedParams(cs_pgm);
     std::tie(sel.infos[0], sel.modules[0], sel.fetch_shader, compute_key.value) =
         GetProgram(sel, HwStage::Compute, SwStage::Compute, cs_params, binding);
     return sel.infos[0] != nullptr;
@@ -1696,13 +1749,43 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
 
     vk::ShaderModule module{};
 
-    // gow3: consecutive draws of a program almost always use the same permutation.
-    auto it = program->last_used < program->modules.size() &&
-                      program->modules[program->last_used].spec == spec
-                  ? program->modules.begin() + program->last_used
-                  : std::ranges::find(program->modules, spec, &Program::Module::spec);
+    // gow3: consecutive draws of a program almost always use the same permutation. Programs
+    // with many permutations alternate between a few: the recently matched ones are compared
+    // before the whole list (GOW3_PERM_MRU=0: only the last one). Comparing a specialization
+    // against each permutation in turn was ~20% of the GPU command thread in Killzone.
+    static const bool perm_mru = [] {
+        const char* env = std::getenv("GOW3_PERM_MRU");
+        return !(env && env[0] == '0');
+    }();
+    const auto count = program->modules.size();
+    auto it = program->modules.end();
+    if (program->last_used < count && program->modules[program->last_used].spec == spec) {
+        it = program->modules.begin() + program->last_used;
+    } else if (perm_mru) {
+        for (const u16 idx : program->recent) {
+            if (idx < count && idx != program->last_used && program->modules[idx].spec == spec) {
+                it = program->modules.begin() + idx;
+                break;
+            }
+        }
+    }
+    if (it == program->modules.end()) {
+        it = std::ranges::find(program->modules, spec, &Program::Module::spec);
+    }
     if (it != program->modules.end()) {
-        program->last_used = std::distance(program->modules.begin(), it);
+        const auto idx = std::distance(program->modules.begin(), it);
+        if (perm_mru && size_t(idx) != program->last_used && program->last_used < count) {
+            // The previous match moves into the recent list (newest first).
+            auto& recent = program->recent;
+            const u16 prev = u16(program->last_used);
+            auto pos = std::find(recent.begin(), recent.end(), prev);
+            if (pos == recent.end()) {
+                pos = recent.end() - 1;
+            }
+            std::move_backward(recent.begin(), pos, pos + 1);
+            recent[0] = prev;
+        }
+        program->last_used = idx;
     }
     if (it == program->modules.end()) {
         if (program->pending || std::ranges::find(program->failed_permutations, spec) !=
