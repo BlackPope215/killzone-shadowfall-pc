@@ -805,6 +805,8 @@ std::atomic<u32> g_gow3_pending_draws;
 /// gow3: source line of the last failed graphics key refresh (diagnosis of skipped draws).
 thread_local int g_gow3_fail_line = 0;
 int PipelineFailLine() { return g_gow3_fail_line; }
+thread_local GsReject g_gow3_gs_reject{};
+GsReject LastGsReject() { return g_gow3_gs_reject; }
 namespace {
 struct PhaseTimer {
     std::atomic<u64>& counter;
@@ -1269,6 +1271,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
 }
 
 bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
+    g_gow3_gs_reject = {}; // a failure before the stages must not count the last draw's reason
     std::memset(&sel.graphics_key, 0, sizeof(GraphicsPipelineKey));
     const auto& regs = (*sel.regs);
     auto& key = sel.graphics_key;
@@ -1451,6 +1454,15 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
     sel.fetch_shader = std::nullopt;
     sel.compilation_pending = false;
     sel.pending_program = nullptr;
+    g_gow3_gs_reject = {};
+    const auto note_gs_reject = [&] {
+        const auto address = [&](HwStage stage) -> u64 {
+            const auto* pgm = regs.ProgramForStage(static_cast<u32>(stage));
+            return pgm ? reinterpret_cast<u64>(pgm->Address<u32*>()) : 0;
+        };
+        g_gow3_gs_reject = {true, u32(regs.vgt_gs_mode.onchip), u32(regs.vgt_strmout_config.raw),
+                            address(HwStage::Export), address(HwStage::Geometry)};
+    };
 
     Shader::Backend::Bindings binding{};
     const auto bind_stage = [&](HwStage stage_in, SwStage stage_out) -> bool {
@@ -1504,6 +1516,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
         }
         if ((regs.vgt_gs_mode.onchip || regs.vgt_strmout_config.raw) && !GsFeaturesAllowed(regs)) {
             LOG_WARNING(Render_Vulkan, "Geometry shader features unsupported, skipping");
+            note_gs_reject();
             { g_gow3_fail_line = __LINE__; return false; }
         }
         if (!bind_stage(HwStage::Export, SwStage::Vertex)) {
@@ -1537,6 +1550,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
         }
         if ((regs.vgt_gs_mode.onchip || regs.vgt_strmout_config.raw) && !GsFeaturesAllowed(regs)) {
             LOG_WARNING(Render_Vulkan, "Geometry shader features unsupported, skipping");
+            note_gs_reject();
             { g_gow3_fail_line = __LINE__; return false; }
         }
         if (!bind_stage(HwStage::Hull, SwStage::TessellationControl)) {
