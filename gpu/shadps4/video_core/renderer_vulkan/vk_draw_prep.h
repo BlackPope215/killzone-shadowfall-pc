@@ -82,6 +82,10 @@ struct PreparedVertexInputs {
 enum class PrepMiss : u32 { Pending, Unavailable, Checksum, Program, Flat, Pipeline, None, Count };
 inline std::array<u64, u32(PrepMiss::Count)> g_gow3_prep_miss{};
 inline u64 g_gow3_prep_waited{}, g_gow3_prep_wait_hits{};
+/// Source lines (vk_pipeline_cache.cpp) where workers gave up, and the hardware stage whose
+/// flattened user data differed on the GPU thread.
+inline std::array<std::atomic<u32>, 4096> g_gow3_prep_fail_lines{};
+inline std::array<u64, 8> g_gow3_prep_flat_stage{};
 
 struct PreparedDraw {
     enum : u32 { Pending = 0, Ready = 1, Unavailable = 2 };
