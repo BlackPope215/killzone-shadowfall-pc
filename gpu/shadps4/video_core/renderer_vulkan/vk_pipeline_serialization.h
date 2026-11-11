@@ -31,10 +31,12 @@ std::optional<std::vector<Binary>> Load(const std::filesystem::path& file, const
                                         const Key& pipeline, u64 graphics_hash);
 } // namespace PipelineBinaryCache
 
+/// gow3: `restore_only` (GOW3_GPL fast-link jobs): restore a binary on disk or return
+/// eIncomplete with no pipeline; never compiles.
 vk::ResultValue<vk::UniquePipeline> CreateCachedGraphicsPipeline(
     vk::Device device, vk::PipelineCache cache, const vk::GraphicsPipelineCreateInfo& info,
     const GraphicsPipelineKey& key, const vk::PipelineBinaryKeyKHR& global_key,
-    const std::filesystem::path& directory);
+    const std::filesystem::path& directory, bool restore_only = false);
 void ReportPipelineBinaryCache();
 
 void RegisterPipelineData(const ComputePipelineKey& key,
