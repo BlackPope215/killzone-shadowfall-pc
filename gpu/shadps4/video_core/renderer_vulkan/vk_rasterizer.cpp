@@ -2940,6 +2940,10 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         } else {
             const auto vsharp =
                 prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
+            if (StreamoutDiag::On()) {
+                StreamoutDiag::CheckRead(vsharp.base_address, vsharp.GetSize(), stage.pgm_hash,
+                                         u64(stage.sw_stage), "bound buffer");
+            }
             if (vsharp.GetSize() == 864 && gbuffer_draw &&
                 memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 camera_motion->OnConstants(reinterpret_cast<const float*>(vsharp.base_address));
