@@ -2539,6 +2539,13 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
         // If there are no bindings, there is nothing further to do.
         return;
     }
+    if (StreamoutDiag::On()) {
+        for (const auto& vb : guest_buffers) {
+            StreamoutDiag::CheckRead(vb.base_address, vb.GetSize(),
+                                     pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash, 1,
+                                     "vertex buffer");
+        }
+    }
     if (motion_draw && !guest_buffers.empty()) {
         // Include every stream: identical position buffers can be paired with different
         // skinning/instance data. Index topology and base offsets are matched separately.
