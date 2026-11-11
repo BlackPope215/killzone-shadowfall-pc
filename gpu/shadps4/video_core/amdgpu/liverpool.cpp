@@ -22,6 +22,7 @@
 #include "core/libraries/videoout/driver.h"
 #include "core/memory.h"
 #include "core/platform.h"
+#include "gow3_threads.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "gow3_write_log.h"
 #include "video_core/amdgpu/pm4_cmds.h"
@@ -108,6 +109,7 @@ void Liverpool::ProcessCommands() {
 
 void Liverpool::Process(std::stop_token stoken) {
     Common::SetCurrentThreadName("shadPS4:GpuCommandProcessor");
+    Gow3Threads::PinHot(0);
 #ifndef _WIN32
     if (clockid_t clock; pthread_getcpuclockid(pthread_self(), &clock) == 0) {
         Gow3Stats::gpu_thread_clock.store(static_cast<int>(clock));
