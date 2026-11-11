@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_map>
 
 #include "gow3_threads.h"
 #include "gow3_toggles.h"
@@ -140,6 +141,52 @@ struct CeSim {
         }
         done = true;
         return at != start;
+    }
+};
+
+/// gow3: the pending dumps of a worker's draw, indexed by 64-byte block (a draw's tables are
+/// walked with dozens of reads against hundreds of dumps: a linear search starved the workers).
+struct DumpIndex {
+    static constexpr u32 Shift = 6;
+    std::unordered_map<u64, u32> head; ///< block -> newest entry covering it (+1; 0 = none)
+    std::vector<std::pair<u32, u32>> links; ///< (entry, next link + 1) per block covered
+
+    void Clear() {
+        head.clear();
+        links.clear();
+    }
+    void Add(const Shader::SrtOverlayEntry& e, u32 index) {
+        for (u64 block = e.address >> Shift; block <= (e.address + e.size - 1) >> Shift; ++block) {
+            u32& first = head[block];
+            links.push_back({index, first});
+            first = u32(links.size());
+        }
+    }
+    static u32 Lookup(const Shader::SrtOverlay& overlay, u64 address, u32 size, u8* out) {
+        const auto& self = *static_cast<const DumpIndex*>(overlay.context);
+        const u32 all = (1u << size) - 1;
+        u32 mask = 0;
+        for (u64 block = address >> Shift; block <= (address + size - 1) >> Shift && mask != all;
+             ++block) {
+            const auto it = self.head.find(block);
+            if (it == self.head.end()) {
+                continue;
+            }
+            // Newest first: a byte takes the first entry that covers it.
+            for (u32 link = it->second; link && mask != all; link = self.links[link - 1].second) {
+                const auto& e = overlay.entries[self.links[link - 1].first];
+                const u64 lo = std::max<u64>(address, e.address);
+                const u64 hi = std::min<u64>(address + size, e.address + e.size);
+                for (u64 at = lo; at < hi; ++at) {
+                    const u32 bit = 1u << u32(at - address);
+                    if (!(mask & bit)) {
+                        out[at - address] = e.data[at - e.address];
+                        mask |= bit;
+                    }
+                }
+            }
+        }
+        return mask;
     }
 };
 
@@ -531,6 +578,7 @@ void DrawPreparation::WorkerLoop(std::stop_token stop, u32 index) {
     std::vector<std::shared_ptr<Submission>> ce_sources;
     std::vector<Shader::SrtOverlayEntry> ce_entries;
     Shader::SrtOverlay ce_overlay{};
+    DumpIndex ce_index;
 
     // The nearest scanned buffer the GPU thread has not reached and no worker has claimed.
     const auto claimable = [&]() -> std::shared_ptr<Submission> {
@@ -577,9 +625,13 @@ void DrawPreparation::WorkerLoop(std::stop_token stop, u32 index) {
             }
         }
         ce_entries.clear();
+        ce_index.Clear();
         ce_overlay = {};
+        ce_overlay.lookup = &DumpIndex::Lookup;
+        ce_overlay.context = &ce_index;
         const auto add_dump = [&](const Submission& from, const Submission::Dump& dump) {
             ce_entries.push_back({dump.address, dump.size, from.dump_bytes.data() + dump.offset});
+            ce_index.Add(ce_entries.back(), u32(ce_entries.size() - 1));
             ce_overlay.lo = std::min(ce_overlay.lo, dump.address);
             ce_overlay.hi = std::max(ce_overlay.hi, dump.address + dump.size);
         };

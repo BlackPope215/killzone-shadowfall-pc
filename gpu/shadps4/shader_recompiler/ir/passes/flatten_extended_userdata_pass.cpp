@@ -899,6 +899,16 @@ u64 PS4_SYSV_ABI SrtOverlayRead(u64 address, u32 size) {
     const SrtOverlay* overlay = g_srt_overlay;
     if (overlay && address + size > overlay->lo && address < overlay->hi) {
         auto* bytes = reinterpret_cast<u8*>(&value);
+        if (overlay->lookup) {
+            u8 pending[8];
+            const u32 mask = overlay->lookup(*overlay, address, size, pending);
+            for (u32 i = 0; i < size; ++i) {
+                if (mask & (1u << i)) {
+                    bytes[i] = pending[i];
+                }
+            }
+            return value;
+        }
         for (size_t i = 0; i < overlay->count; ++i) {
             const auto& e = overlay->entries[i];
             const u64 lo = std::max<u64>(address, e.address);
