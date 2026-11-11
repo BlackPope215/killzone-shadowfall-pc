@@ -28,6 +28,10 @@ struct SrtOverlay {
     const SrtOverlayEntry* entries{};
     size_t count{};
     u64 lo{~0ull}, hi{}; ///< bounds of all entries
+    /// Optional indexed lookup: puts the bytes of [address, address + size) the overlay holds
+    /// into `out` (newest entry wins) and returns the mask of bytes it set.
+    u32 (*lookup)(const SrtOverlay& overlay, u64 address, u32 size, u8* out){};
+    const void* context{};
 };
 extern thread_local const SrtOverlay* g_srt_overlay;
 /// The same walker with every guest memory read taken through g_srt_overlay; null when its
