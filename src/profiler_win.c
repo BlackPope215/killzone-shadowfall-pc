@@ -30,7 +30,17 @@ typedef struct {
     StackCount stacks[STACKS];
     unsigned distinct, dropped;
     Stack last;
+    int flat; /* 0 not decided, 1 yes, -1 no (GOW3_PROFILE_FLAT) */
+    struct FlatEntry *table;
+    unsigned flat_samples, flat_dropped;
 } ThreadInfo;
+
+/* GOW3_PROFILE_FLAT=<name part>[|<name part>...]: for the threads whose name contains one of
+ * them, every frame address with its self samples (leaf) and inclusive samples (anywhere on the
+ * stack), so the cost of a function adds up across all the stacks that reach it. */
+enum { FLAT_SIZE = 16384, FLAT_PRINT = 400 };
+struct FlatEntry { uintptr_t address; unsigned self, incl; };
+static const char *flat_names;
 
 static ThreadInfo threads[MAX_THREADS];
 static int thread_count;
@@ -150,7 +160,60 @@ static void walk(const ThreadInfo *t, CONTEXT *c, Stack *s) {
     }
 }
 
+static int flat_wanted(ThreadInfo *t) {
+    if (!flat_names || !flat_names[0]) return -1;
+    if (!strncmp(t->name, "tid", 3)) return 0; /* not named yet: decide later */
+    const char *p = flat_names;
+    while (*p) {
+        const char *end = strchr(p, '|');
+        size_t n = end ? (size_t)(end - p) : strlen(p);
+        if (n) {
+            char part[64];
+            if (n >= sizeof(part)) n = sizeof(part) - 1;
+            memcpy(part, p, n);
+            part[n] = 0;
+            if (strstr(t->name, part)) return 1;
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+    return -1;
+}
+
+static struct FlatEntry *flat_slot(ThreadInfo *t, uintptr_t address) {
+    unsigned h = (unsigned)((address * 0x9E3779B97F4A7C15ull) >> 50) & (FLAT_SIZE - 1);
+    for (unsigned probe = 0; probe < 64; ++probe, h = (h + 1) & (FLAT_SIZE - 1)) {
+        struct FlatEntry *e = &t->table[h];
+        if (e->address == address) return e;
+        if (!e->address) { e->address = address; return e; }
+    }
+    ++t->flat_dropped;
+    return NULL;
+}
+
+static void record_flat(ThreadInfo *t, const Stack *s) {
+    if (t->flat == 0) t->flat = flat_wanted(t);
+    if (t->flat != 1) return;
+    if (!t->table && !(t->table = calloc(FLAT_SIZE, sizeof(struct FlatEntry)))) { t->flat = -1; return; }
+    ++t->flat_samples;
+    for (int i = 0; i < s->depth; ++i) {
+        int seen = 0;
+        for (int j = 0; j < i; ++j) seen |= s->frame[j] == s->frame[i];
+        if (seen) continue;
+        struct FlatEntry *e = flat_slot(t, s->frame[i]);
+        if (!e) continue;
+        ++e->incl;
+        if (i == 0) ++e->self;
+    }
+}
+
+static int by_incl(const void *a, const void *b) {
+    unsigned x = ((const struct FlatEntry *)a)->incl, y = ((const struct FlatEntry *)b)->incl;
+    return x < y ? 1 : x > y ? -1 : 0;
+}
+
 static void record(ThreadInfo *t, const Stack *s) {
+    record_flat(t, s);
     ++t->samples;
     t->last = *s;
     if (s->depth && s->frame[0] >= ntdll_base && s->frame[0] < ntdll_end) ++t->waiting; /* syscall stubs: waits/sleeps */
@@ -197,6 +260,16 @@ static void write_report(uint64_t window_ms, unsigned round) {
         }
         fprintf(report, "   last:\n");
         print_stack(t->last.frame, t->last.depth);
+        if (t->table && t->flat_samples) {
+            qsort(t->table, FLAT_SIZE, sizeof(struct FlatEntry), by_incl);
+            fprintf(report, "   flat: %u samples, %u addresses dropped\n", t->flat_samples, t->flat_dropped);
+            for (unsigned k = 0; k < FLAT_SIZE && k < FLAT_PRINT && t->table[k].incl; ++k) {
+                fprintf(report, "   flat self %u incl %u\n", t->table[k].self, t->table[k].incl);
+                print_stack(&t->table[k].address, 1);
+            }
+            memset(t->table, 0, FLAT_SIZE * sizeof(struct FlatEntry));
+            t->flat_samples = t->flat_dropped = 0;
+        }
         t->samples = t->waiting = t->distinct = t->dropped = 0;
     }
     fflush(report);
@@ -235,6 +308,7 @@ void profiler_start(ProfilerDescribe describe_address) {
     report = fopen(path, "w");
     if (!report) { fprintf(stderr, "Profiler: cannot write %s\n", path); return; }
     describe = describe_address;
+    flat_names = getenv("GOW3_PROFILE_FLAT");
     HMODULE ntdll = GetModuleHandleA("ntdll.dll");
     query_thread = (QueryThread)(void *)GetProcAddress(ntdll, "NtQueryInformationThread");
     get_description = (GetDescription)(void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetThreadDescription");
