@@ -1438,6 +1438,20 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
     if (prepared.reg_checksum != liverpool->gfx_reg_checksum) {
         return miss(PrepMiss::Checksum);
     }
+    // gow3 (stream-out): geometry shader draws are looked up here, not taken from a worker.
+    // A worker reads the vertex stage's fetch shader from guest memory ahead of the GPU thread;
+    // read too early it finds none, and the pipeline it picks has no vertex inputs. Nothing
+    // above compares that, so the draw ran without its vertex buffer: a GPU page fault on AMD
+    // (device lost on Killzone's stream-out draws, in most runs). GOW3_PREP_GS=1: as before.
+    static const bool prepare_gs = [] {
+        const char* env = std::getenv("GOW3_PREP_GS");
+        return env && env[0] == '1';
+    }();
+    const auto vgt_stages = liverpool->regs.stage_enable.raw;
+    if (!prepare_gs && (vgt_stages == AmdGpu::ShaderStageEnable::VgtStages::EsGs ||
+                        vgt_stages == AmdGpu::ShaderStageEnable::VgtStages::LsHsEsGs)) {
+        return miss(PrepMiss::Program);
+    }
     // Same registers; the stage programs and their flattened user data (which also covers
     // everything read from guest memory for the specialization) must match as well. This is
     // the per-stage work GetProgram does on the regular path.

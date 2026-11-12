@@ -1881,8 +1881,9 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         if (logged_draws < 12) {
             ++logged_draws;
             const auto& vb = vertex_binds;
-            std::printf("Stream-out: draw call: %s, %u indices, %u instances, first vertex %u "
+            std::printf("Stream-out: draw call: %s, %s, %u indices, %u instances, first vertex %u "
                         "(%#x), first instance %u, index offset %u, %u vertex buffers:",
+                        used_prepared ? "pipeline from a worker" : "pipeline looked up here",
                         is_indexed ? "indexed" : "not indexed", num_indices, num_instances,
                         first_vertex, first_vertex, first_instance, index_offset,
                         u32(vb.num_buffers));
