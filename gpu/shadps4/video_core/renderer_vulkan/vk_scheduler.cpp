@@ -13,6 +13,7 @@
 #endif
 #include <functional>
 
+#include "video_core/buffer_cache/buffer.h"
 #include "gow3_copy.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "gow3_toggles.h"
@@ -594,6 +595,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
                              int(addresses[i].addressType),
                              static_cast<unsigned long long>(addresses[i].reportedAddress),
                              static_cast<unsigned long long>(addresses[i].addressPrecision));
+                VideoCore::DescribeDeviceAddress(addresses[i].reportedAddress, out);
             }
             for (u32 i = 0; i < counts.vendorInfoCount; ++i) {
                 std::fprintf(out, "Device fault:   vendor \"%s\" code %#llx data %#llx\n",

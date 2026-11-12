@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdio>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -45,6 +46,11 @@ constexpr vk::BufferUsageFlags AllFlags =
 
 /// gow3: prints the VMA buffers alive by name for the VRAM report.
 void ReportBufferMemory();
+
+/// gow3: which buffer a GPU address reported by the driver (VK_EXT_device_fault) belongs to:
+/// prints every buffer with a device address that contains it, or the nearest ones, and for
+/// guest memory arenas the guest address it stands for.
+void DescribeDeviceAddress(u64 device_address, std::FILE* out);
 
 struct UniqueBuffer {
     explicit UniqueBuffer(vk::Device device, VmaAllocator allocator);
