@@ -43,6 +43,13 @@ static constexpr u32 PipelineKeyVersion = 5u; // gow3: Info layout (ImageResourc
 
 namespace Vulkan {
 
+// gow3: why records could not be preloaded, for the "removed ... records" line.
+struct PreloadRejects {
+    u32 key_version, meta_missing, meta_version, binary_version, motion_vectors, binary_missing,
+        permutation_conflict;
+};
+static PreloadRejects g_preload_rejects{};
+
 namespace {
 // gow3: the test knobs that change recompiled SPIR-V (GOW3_LIGHTING_TEST=dref,
 // GOW3_AMD_PATHS_OFF=shaderext) get their own shader binary cache version.
@@ -674,12 +681,14 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     u32 meta_version{};
     meta.Read(meta_version);
     if (meta_version != Serialization::ShaderMetaVersion) {
+        ++g_preload_rejects.meta_version;
         return false;
     }
 
     u32 binary_version{};
     meta.Read(binary_version);
     if (binary_version != CurrentShaderBinaryVersion()) {
+        ++g_preload_rejects.binary_version;
         return false;
     }
 
@@ -693,6 +702,7 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     // Motion vertex shaders embed session-local buffer device addresses. They must be
     // recompiled for the current allocation, never loaded from a previous process.
     if (info.hw_stage == Shader::HwStage::Vertex && spec.runtime_info.hw.vs.motion_vectors) {
+        ++g_preload_rejects.motion_vectors;
         return false;
     }
 
@@ -824,6 +834,7 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
         Storage::DataBase::Instance().Load(Storage::BlobType::ShaderMeta,
                                            fmt::format("{:#018x}", hash), meta_blob);
         if (meta_blob.empty()) {
+            ++g_preload_rejects.meta_missing;
             return false;
         }
 
@@ -875,6 +886,7 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
                                        fmt::format("{:#018x}_{}", program->info.pgm_hash, perm_idx),
                                        spv);
     if (spv.empty()) {
+        ++g_preload_rejects.binary_missing;
         return false;
     }
 
@@ -899,6 +911,7 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
                             "Cached permutation {} of {}_{:x} conflicts with index {}, skipping "
                             "preload",
                             perm_idx, program->info.hw_stage, program->info.pgm_hash, idx);
+                ++g_preload_rejects.permutation_conflict;
                 return false;
             }
             module = it->module;
@@ -1064,6 +1077,8 @@ void PipelineCache::WarmUp(const std::function<void(u32, u32, const char*)>& pro
                     u32 is_compute{};
                     pldata.Read(is_compute);
                     result = is_compute ? LoadComputePipeline(ar) : LoadGraphicsPipeline(ar);
+                } else {
+                    ++g_preload_rejects.key_version;
                 }
             } catch (const std::exception& e) {
                 if (++damaged <= 8) {
@@ -1123,6 +1138,12 @@ void PipelineCache::WarmUp(const std::function<void(u32, u32, const char*)>& pro
     if (!stale.empty()) {
         std::printf("Pipeline warm-up: removed %zu records that cannot be preloaded (%u damaged)\n",
                     stale.size(), damaged);
+        const auto& r = g_preload_rejects;
+        std::printf("Pipeline warm-up: reject reasons: record format %u, shader record missing %u, "
+                    "shader record format %u, shader version %u, motion-vector vertex shader %u, "
+                    "shader binary missing %u, permutation index conflict %u\n",
+                    r.key_version, r.meta_missing, r.meta_version, r.binary_version,
+                    r.motion_vectors, r.binary_missing, r.permutation_conflict);
     }
 
     Storage::DataBase::Instance().FinishPreload();
