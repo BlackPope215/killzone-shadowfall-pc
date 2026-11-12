@@ -1892,6 +1892,13 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                             static_cast<unsigned long long>(vb.host_sizes[i]),
                             static_cast<unsigned long long>(vb.host_strides[i]));
             }
+            // Where a missing fetch shader comes from: the shader's own record (set when it
+            // was translated, or read from the disk cache) and a parse of the code right now.
+            const bool parsed_now = Shader::Gcn::ParseFetchShader(vs_info).has_value();
+            std::printf("; shader record: has fetch %d (sgpr %u), parsed now %d, user data %08x "
+                        "%08x", int(vs_info.has_fetch_shader), vs_info.fetch_shader_sgpr_base,
+                        int(parsed_now), vs_info.user_data.size() > 0 ? vs_info.user_data[0] : 0,
+                        vs_info.user_data.size() > 1 ? vs_info.user_data[1] : 0);
             std::printf("; fetch shader %s, vs hash %08x; index buffer guest %#llx, type %u, "
                         "max %u indices, bound at arena offset %#llx (vk type %d)\n",
                         fetch_shader ? "yes" : "none", u32(vs_info.pgm_hash),
