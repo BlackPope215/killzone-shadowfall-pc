@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -11,6 +12,7 @@
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <fstream>
 #include <map>
 #ifdef _WIN32
@@ -45,8 +47,8 @@ namespace Vulkan {
 
 // gow3: why records could not be preloaded, for the "removed ... records" line.
 struct PreloadRejects {
-    u32 key_version, meta_missing, meta_version, binary_version, motion_vectors, binary_missing,
-        permutation_conflict;
+    u32 key_version, meta_missing, meta_version, binary_version, binary_missing,
+        permutation_conflict, motion_off, motion_old_format;
 };
 static PreloadRejects g_preload_rejects{};
 
@@ -663,10 +665,81 @@ void RegisterShaderMeta(const Shader::Info& info,
                                        fmt::format("{:#018x}", perm_hash), ar.TakeOff());
 }
 
+// gow3: motion-vector vertex shaders (emit_spirv_special.cpp) hold the addresses of this
+// session's object motion buffers as 64-bit constants. Their records were dropped at every
+// start for that, so each session compiled those pipelines again while playing (644 of 2694
+// in Killzone, a stall each with skipping off). The cache now stores placeholders in their
+// place, and a load writes the current addresses back.
+namespace MotionPlaceholder {
+constexpr u64 Params = 0x4d56504152414d00ULL;    // "MVPARAM\0"
+constexpr u64 Positions = 0x4d56504f53495400ULL; // "MVPOSIT\0"
+
+u32 Rewrite(std::vector<u32>& spv, bool to_placeholder) {
+    const u64 params = Shader::MotionVectors::params_address;
+    const u64 positions = Shader::MotionVectors::positions_address;
+    if (!params || !positions) {
+        return 0;
+    }
+    const std::array<std::pair<u64, u64>, 3> real_to_placeholder{{
+        {params, Params},
+        {params + 16, Params + 16},
+        {positions, Positions},
+    }};
+    u32 rewritten = 0;
+    for (size_t pos = 5; pos < spv.size();) {
+        const u32 words = spv[pos] >> 16;
+        if (words == 0 || pos + words > spv.size()) {
+            break;
+        }
+        if ((spv[pos] & 0xffffu) == 43u /* OpConstant */ && words == 5) {
+            const u64 value = u64(spv[pos + 3]) | (u64(spv[pos + 4]) << 32);
+            for (const auto& [real, placeholder] : real_to_placeholder) {
+                const u64 from = to_placeholder ? real : placeholder;
+                const u64 to = to_placeholder ? placeholder : real;
+                if (value == from) {
+                    spv[pos + 3] = u32(to);
+                    spv[pos + 4] = u32(to >> 32);
+                    ++rewritten;
+                    break;
+                }
+            }
+        }
+        pos += words;
+    }
+    return rewritten;
+}
+
+bool IsMotionShader(const Shader::Info& info, const Shader::StageSpecialization& spec) {
+    return info.hw_stage == Shader::HwStage::Vertex && spec.runtime_info.hw.vs.motion_vectors;
+}
+
+/// A cached binary made usable in this session; false: the record cannot be used.
+bool Restore(std::vector<u32>& spv, const Shader::Info& info,
+             const Shader::StageSpecialization& spec) {
+    static const bool off = [] {
+        const char* env = std::getenv("GOW3_MOTION_CACHE");
+        return env && env[0] == '0';
+    }();
+    if (!IsMotionShader(info, spec)) {
+        return true;
+    }
+    if (off || !Shader::MotionVectors::positions_address) {
+        ++g_preload_rejects.motion_off;
+        return false;
+    }
+    if (Rewrite(spv, false) == 0) {
+        ++g_preload_rejects.motion_old_format; // saved with another session's addresses
+        return false;
+    }
+    return true;
+}
+} // namespace MotionPlaceholder
+
 void RegisterShaderBinary(std::vector<u32>&& spv, u64 pgm_hash, size_t perm_idx) {
     if (!Storage::DataBase::Instance().IsOpened()) {
         return;
     }
+    MotionPlaceholder::Rewrite(spv, true);
 
     Storage::DataBase::Instance().Save(Storage::BlobType::ShaderBinary,
                                        fmt::format("{:#018x}_{}", pgm_hash, perm_idx),
@@ -699,13 +772,8 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     spec.Deserialize(ar);
     info.Deserialize(ar);
 
-    // Motion vertex shaders embed session-local buffer device addresses. They must be
-    // recompiled for the current allocation, never loaded from a previous process.
-    if (info.hw_stage == Shader::HwStage::Vertex && spec.runtime_info.hw.vs.motion_vectors) {
-        ++g_preload_rejects.motion_vectors;
-        return false;
-    }
-
+    // Motion vertex shaders embed session-local buffer device addresses: the callers put
+    // the current ones into the cached binary (MotionPlaceholder::Restore).
     // gow3: a pipeline's stages are loaded in turn into the same selection. Only the vertex
     // stage has a fetch shader: a stage after it (geometry) must not clear it, or the
     // preloaded pipeline binds no vertex buffers and its draws read unmapped GPU memory
@@ -887,6 +955,9 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
                                        spv);
     if (spv.empty()) {
         ++g_preload_rejects.binary_missing;
+        return false;
+    }
+    if (!MotionPlaceholder::Restore(spv, program->info, spec)) {
         return false;
     }
 
@@ -1140,10 +1211,11 @@ void PipelineCache::WarmUp(const std::function<void(u32, u32, const char*)>& pro
                     stale.size(), damaged);
         const auto& r = g_preload_rejects;
         std::printf("Pipeline warm-up: reject reasons: record format %u, shader record missing %u, "
-                    "shader record format %u, shader version %u, motion-vector vertex shader %u, "
-                    "shader binary missing %u, permutation index conflict %u\n",
+                    "shader record format %u, shader version %u, shader binary missing %u, "
+                    "permutation index conflict %u, motion shader saved by an older build %u, "
+                    "motion shader with object motion off %u\n",
                     r.key_version, r.meta_missing, r.meta_version, r.binary_version,
-                    r.motion_vectors, r.binary_missing, r.permutation_conflict);
+                    r.binary_missing, r.permutation_conflict, r.motion_old_format, r.motion_off);
     }
 
     Storage::DataBase::Instance().FinishPreload();
@@ -1304,7 +1376,8 @@ void PipelineCache::ReadWarmEntry(BackgroundWarmup& warm, std::vector<u8>&& data
                             fmt::format("{:#018x}_{}", stage->program->info.pgm_hash,
                                         stage->perm_idx),
                             spv);
-                    if (!spv.empty()) {
+                    if (!spv.empty() &&
+                        MotionPlaceholder::Restore(spv, stage->program->info, stage->spec)) {
                         const auto module_started = std::chrono::steady_clock::now();
                         stage->module = CompileSPV(spv, stage->device);
                         module_time = ElapsedNs(module_started);
