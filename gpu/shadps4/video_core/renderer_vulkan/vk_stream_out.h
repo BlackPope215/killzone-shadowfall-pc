@@ -81,6 +81,7 @@ struct XfbDraw {
     std::array<vk::DeviceSize, 4> sizes{};
     std::array<vk::Buffer, 4> counters{};
     std::array<vk::DeviceSize, 4> counter_offsets{};
+    bool no_counters = false; ///< GOW3_STREAMOUT_TEST=2: capture from offset 0, save nothing
 
     /// Inside the render pass, around the draw: binds the buffers and starts the capture at the
     /// counters' offsets; End saves the new offsets.
@@ -137,6 +138,9 @@ private:
     u64 draws = 0;
     u64 updates = 0;
     bool logged_unresolved = false;
+    bool logged_past_end = false;
+    /// gow3: the offset the game last set from a packet, in bytes (-1: left by a capture).
+    std::array<s64, 4> explicit_offset{-1, -1, -1, -1};
 };
 
 } // namespace Vulkan
