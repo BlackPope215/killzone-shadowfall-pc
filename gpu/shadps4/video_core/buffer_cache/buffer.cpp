@@ -260,6 +260,13 @@ void DescribeDeviceAddress(u64 device_address, std::FILE* out) {
             above = &b;
         }
     }
+    for (size_t i = 0; i < addressed_buffers.size() && i < 48; ++i) {
+        const auto& b = addressed_buffers[i];
+        std::fprintf(out, "Device fault:   buffer %zu '%s' type %d: %#llx .. %#llx, guest %#llx\n",
+                     i, b.name, b.mem_type, (unsigned long long)b.device_address,
+                     (unsigned long long)(b.device_address + b.size),
+                     (unsigned long long)b.cpu_addr);
+    }
     if (!found) {
         std::fprintf(out, "Device fault:   in no buffer with a device address (%zu known)\n",
                      addressed_buffers.size());
