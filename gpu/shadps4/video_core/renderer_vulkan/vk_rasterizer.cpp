@@ -1877,6 +1877,13 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     // gow3: GOW3_SKIP_FILE (vk_shader_skip.h) drops listed shaders to bisect an artifact.
     const auto* skip_ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
     bool skip_draw = ShaderSkip::Skip(vs_info.pgm_hash, skip_ps ? skip_ps->pgm_hash : 0);
+    // gow3: GOW3_STREAMOUT_TEST=3: stream-out draws do everything but the draw call itself
+    // (pipeline built, state and buffers bound), to tell the draw from its preparation.
+    static const bool streamout_no_draw = [] {
+        const char* env = std::getenv("GOW3_STREAMOUT_TEST");
+        return env && std::atoi(env) == 3;
+    }();
+    skip_draw |= streamout_no_draw && regs.vgt_strmout_config.raw != 0;
     // gow3: GOW3_OCCLUSION=real (vk_occlusion.h): occlusion test draws run in a query, and a
     // predicated draw whose test found nothing visible is dropped.
     s32 query = -1;
