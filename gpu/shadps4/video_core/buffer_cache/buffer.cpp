@@ -227,6 +227,54 @@ void UniqueBuffer::Create(vk::BufferCreateInfo& buffer_ci, MemoryType mem_type,
     }
 }
 
+namespace {
+struct AddressedBuffer {
+    u64 device_address;
+    u64 size;
+    u64 cpu_addr;
+    int mem_type;
+    char name[40];
+};
+std::mutex addressed_mutex;
+std::vector<AddressedBuffer> addressed_buffers; // never shrinks: freed ones still explain a fault
+} // namespace
+
+void DescribeDeviceAddress(u64 device_address, std::FILE* out) {
+    std::scoped_lock lock{addressed_mutex};
+    const AddressedBuffer* below = nullptr;
+    const AddressedBuffer* above = nullptr;
+    bool found = false;
+    for (const auto& b : addressed_buffers) {
+        if (device_address >= b.device_address && device_address < b.device_address + b.size) {
+            const u64 offset = device_address - b.device_address;
+            std::fprintf(out,
+                         "Device fault:   inside buffer '%s' (memory type %d) at %#llx + %#llx of "
+                         "%#llx bytes; guest address %#llx\n",
+                         b.name, b.mem_type, (unsigned long long)b.device_address,
+                         (unsigned long long)offset, (unsigned long long)b.size,
+                         (unsigned long long)(b.cpu_addr ? b.cpu_addr + offset : 0));
+            found = true;
+        } else if (b.device_address + b.size <= device_address) {
+            if (!below || b.device_address > below->device_address) below = &b;
+        } else if (!above || b.device_address < above->device_address) {
+            above = &b;
+        }
+    }
+    if (!found) {
+        std::fprintf(out, "Device fault:   in no buffer with a device address (%zu known)\n",
+                     addressed_buffers.size());
+        for (const auto* b : {below, above}) {
+            if (b) {
+                std::fprintf(out, "Device fault:   nearest: '%s' (memory type %d) %#llx .. %#llx, "
+                                  "guest %#llx\n",
+                             b->name, b->mem_type, (unsigned long long)b->device_address,
+                             (unsigned long long)(b->device_address + b->size),
+                             (unsigned long long)b->cpu_addr);
+            }
+        }
+    }
+}
+
 Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes_,
                MemoryType mem_type_, std::string_view debug_name,
                vk::BufferUsageFlags extra_usage)
@@ -252,6 +300,18 @@ Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes
         Vulkan::SetObjectName(device, Handle(), "Buffer {:#x}:{:#x}", cpu_addr, size_bytes);
     }
 
+    if (buffer.bda_addr) {
+        AddressedBuffer entry{buffer.bda_addr, size_bytes, cpu_addr, int(mem_type), {}};
+        if (debug_name.empty()) {
+            std::snprintf(entry.name, sizeof(entry.name), "guest %#llx",
+                          (unsigned long long)cpu_addr);
+        } else {
+            std::snprintf(entry.name, sizeof(entry.name), "%.*s", int(debug_name.size()),
+                          debug_name.data());
+        }
+        std::scoped_lock lock{addressed_mutex};
+        addressed_buffers.push_back(entry);
+    }
     if (mem_type != MemoryType::Sparse) {
         NoteBuffer(buffer.allocation,
                    (debug_name.empty() ? std::string{"unnamed"} : std::string{debug_name}) +
