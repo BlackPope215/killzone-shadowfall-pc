@@ -696,7 +696,13 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
         return false;
     }
 
-    fetch_shader_data = spec.fetch_shader_data;
+    // gow3: a pipeline's stages are loaded in turn into the same selection. Only the vertex
+    // stage has a fetch shader: a stage after it (geometry) must not clear it, or the
+    // preloaded pipeline binds no vertex buffers and its draws read unmapped GPU memory
+    // (device lost on the stream-out draws in Killzone).
+    if (spec.fetch_shader_data) {
+        fetch_shader_data = spec.fetch_shader_data;
+    }
     return true;
 }
 
@@ -1399,7 +1405,15 @@ void PipelineCache::PumpWarmUp() {
                 usable = stage.info != nullptr;
                 infos[i] = stage.info;
                 modules[i] = stage.result;
-                fetch = stage.fetch; // the blocking load keeps the last stage's too
+                if (stage.fetch) {
+                    fetch = stage.fetch; // the vertex stage's; a geometry stage has none
+                } else if (fetch) {
+                    static bool said = false;
+                    if (!said) {
+                        said = true;
+                        std::printf("Preload: fetch shader kept across a later stage\n");
+                    }
+                }
             }
         }
         if (!usable) {
