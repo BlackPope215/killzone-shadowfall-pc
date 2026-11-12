@@ -198,12 +198,33 @@ void XfbDraw::Begin(vk::CommandBuffer cmdbuf) const {
             cmdbuf.bindTransformFeedbackBuffersEXT(b, 1, &buffers[b], &offsets[b], &sizes[b]);
         }
     }
+    if (no_counters) {
+        cmdbuf.beginTransformFeedbackEXT(0, 0, nullptr, nullptr);
+        return;
+    }
     cmdbuf.beginTransformFeedbackEXT(0, num_counters, counters.data(), counter_offsets.data());
 }
 
 void XfbDraw::End(vk::CommandBuffer cmdbuf) const {
+    if (no_counters) {
+        cmdbuf.endTransformFeedbackEXT(0, 0, nullptr, nullptr);
+        return;
+    }
     cmdbuf.endTransformFeedbackEXT(0, num_counters, counters.data(), counter_offsets.data());
 }
+
+namespace {
+/// gow3: GOW3_STREAMOUT_TEST, to find what loses the device on AMD: 1 the draw runs but nothing
+/// is captured; 2 captures start at offset 0 and no offsets are read or saved (no counter
+/// buffer); 0 (default) the full path.
+int TestMode() {
+    static const int mode = [] {
+        const char* env = std::getenv("GOW3_STREAMOUT_TEST");
+        return env ? std::atoi(env) : 0;
+    }();
+    return mode;
+}
+} // namespace
 
 StreamOut::StreamOut(const Instance& instance_, Runtime& runtime_,
                      VideoCore::BufferCache& buffer_cache_,
@@ -280,6 +301,34 @@ XfbDraw StreamOut::Prepare(const AmdGpu::Regs& regs, bool& needs_barrier) {
     if (++draws == 1) {
         LogFirstDraw(regs, layout, bases, sizes);
     }
+    // gow3: every early draw: where it writes, how much room it has, where it starts.
+    bool starts_past_end = false;
+    for (u32 b = 0; b < 4; ++b) {
+        if (!bases[b]) {
+            continue;
+        }
+        starts_past_end |= explicit_offset[b] >= 0 && u64(explicit_offset[b]) >= sizes[b];
+        if (draws <= 24) {
+            std::printf("Stream-out: draw #%llu buffer %u: base %#llx, %llu bytes bound (VGT size "
+                        "%u dwords), start %lld bytes, %u indices, test mode %d\n",
+                        static_cast<unsigned long long>(draws), b,
+                        static_cast<unsigned long long>(*bases[b]),
+                        static_cast<unsigned long long>(sizes[b]),
+                        u32(regs.vgt_strmout_buffers[b].size),
+                        static_cast<long long>(explicit_offset[b]), regs.num_indices, TestMode());
+            std::fflush(stdout);
+        }
+    }
+    // A capture that starts at or past the end of its buffer writes nothing on the console;
+    // starting one there is left to the driver in Vulkan, so it is not started.
+    if (starts_past_end || TestMode() == 1) {
+        if (starts_past_end && !std::exchange(logged_past_end, true)) {
+            std::printf("Stream-out: a capture would start past the end of its buffer; such "
+                        "draws run without capturing\n");
+            std::fflush(stdout);
+        }
+        return draw;
+    }
     if (!complete) {
         if (!std::exchange(logged_unresolved, true)) {
             std::printf("Stream-out: a stream-out buffer of the draw was not found (V# not traced "
@@ -306,6 +355,13 @@ XfbDraw StreamOut::Prepare(const AmdGpu::Regs& regs, bool& needs_barrier) {
     }
     needs_barrier |= runtime.IsBufferAccessed(counters.get(), 0, CounterBytes, true);
     draw.active = draw.num_counters != 0;
+    draw.no_counters = TestMode() == 2;
+    // What the capture leaves in the counter is known to the GPU only.
+    for (u32 b = 0; b < 4; ++b) {
+        if (bases[b] && !draw.no_counters) {
+            explicit_offset[b] = -1;
+        }
+    }
     return draw;
 }
 
@@ -345,6 +401,7 @@ void StreamOut::BufferUpdate(const AmdGpu::PM4CmdStrmoutBufferUpdate& packet) {
     case AmdGpu::SourceSelect::BufferOffset: {
         // The packet counts dwords unless DATA_TYPE says bytes; Vulkan's counters count bytes.
         const u32 bytes = packet.data_type.Value() ? packet.buffer_offset : packet.buffer_offset * 4;
+        explicit_offset[b & 3] = bytes;
         runtime.InlineData(counters.get(), counter_offset, bytes);
         break;
     }
