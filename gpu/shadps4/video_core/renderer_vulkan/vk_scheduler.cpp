@@ -573,6 +573,37 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
 
     ImGui::Core::TextureManager::Submit();
     auto submit_result = instance.GetGraphicsQueue().submit(submit_info, info.fence);
+    if (submit_result == vk::Result::eErrorDeviceLost && instance.IsDeviceFaultSupported()) {
+        // gow3: the driver's account of the loss, to both logs.
+        const vk::Device device = instance.GetDevice();
+        vk::DeviceFaultCountsEXT counts{};
+        const auto counted = device.getFaultInfoEXT(&counts, nullptr);
+        std::vector<vk::DeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
+        std::vector<vk::DeviceFaultVendorInfoEXT> vendors(counts.vendorInfoCount);
+        counts.vendorBinarySize = 0;
+        vk::DeviceFaultInfoEXT fault{};
+        fault.pAddressInfos = addresses.data();
+        fault.pVendorInfos = vendors.data();
+        const auto got = device.getFaultInfoEXT(&counts, &fault);
+        for (std::FILE* out : {stdout, stderr}) {
+            std::fprintf(out, "Device fault: query %d/%d, \"%s\", %u addresses, %u vendor records\n",
+                         int(counted), int(got), fault.description.data(),
+                         counts.addressInfoCount, counts.vendorInfoCount);
+            for (u32 i = 0; i < counts.addressInfoCount; ++i) {
+                std::fprintf(out, "Device fault:   address type %d at %#llx (precision %#llx)\n",
+                             int(addresses[i].addressType),
+                             static_cast<unsigned long long>(addresses[i].reportedAddress),
+                             static_cast<unsigned long long>(addresses[i].addressPrecision));
+            }
+            for (u32 i = 0; i < counts.vendorInfoCount; ++i) {
+                std::fprintf(out, "Device fault:   vendor \"%s\" code %#llx data %#llx\n",
+                             vendors[i].description.data(),
+                             static_cast<unsigned long long>(vendors[i].vendorFaultCode),
+                             static_cast<unsigned long long>(vendors[i].vendorFaultData));
+            }
+            std::fflush(out);
+        }
+    }
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");
 
     work_semaphore.Refresh();
