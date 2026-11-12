@@ -1892,8 +1892,13 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                             static_cast<unsigned long long>(vb.host_sizes[i]),
                             static_cast<unsigned long long>(vb.host_strides[i]));
             }
-            std::printf("; fetch shader %s, vs hash %08x\n", fetch_shader ? "yes" : "none",
-                        u32(vs_info.pgm_hash));
+            std::printf("; fetch shader %s, vs hash %08x; index buffer guest %#llx, type %u, "
+                        "max %u indices, bound at arena offset %#llx (vk type %d)\n",
+                        fetch_shader ? "yes" : "none", u32(vs_info.pgm_hash),
+                        static_cast<unsigned long long>(regs.index_base_address.Address<u64>()),
+                        u32(regs.index_buffer_type.raw), regs.max_index_size,
+                        static_cast<unsigned long long>(index_bind.offset),
+                        int(index_bind.type));
             std::fflush(stdout);
         }
     }
@@ -2985,6 +2990,34 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
     for (u32 buffer_index = 0; buffer_index < stage.buffers.size(); ++buffer_index) {
         const auto& desc = stage.buffers[buffer_index];
         const RingBinding* ring = num_ring_stages ? FindRingBinding(stage, buffer_index) : nullptr;
+        // gow3 (stream-out): every buffer the stages of the first stream-out draws bind. The GPU
+        // page fault of those draws read an address that is no buffer's (0x1bf800000).
+        if (Regs().vgt_strmout_config.raw != 0) [[unlikely]] {
+            static u32 logged_binds = 0;
+            if (logged_binds < 48) {
+                ++logged_binds;
+                if (desc.IsSpecial() || ring) {
+                    std::printf("Stream-out: bind: shader %08x stage %u buffer %u: %s type %u, "
+                                "written %d, dma %d\n",
+                                u32(stage.pgm_hash), u32(stage.sw_stage), buffer_index,
+                                ring ? "constant ring copy" : "special", u32(desc.buffer_type),
+                                int(desc.is_written), int(stage.uses_dma));
+                } else {
+                    const auto sharp =
+                        prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
+                    std::printf("Stream-out: bind: shader %08x stage %u buffer %u: guest %#llx, "
+                                "%llu bytes (stride %u, records %u), type %u, written %d, dma %d, "
+                                "%s\n",
+                                u32(stage.pgm_hash), u32(stage.sw_stage), buffer_index,
+                                static_cast<unsigned long long>(sharp.base_address),
+                                static_cast<unsigned long long>(sharp.GetSize()),
+                                u32(sharp.GetStride()), u32(sharp.num_records),
+                                u32(desc.buffer_type), int(desc.is_written), int(stage.uses_dma),
+                                prepared ? "prepared" : "from the shader's tables");
+                }
+                std::fflush(stdout);
+            }
+        }
         if (ring) {
             // Copied by the GPU command thread into the constant ring (read-only).
             // gow3: dump the ring's own copy, not the guest address. A binding whose bytes came
