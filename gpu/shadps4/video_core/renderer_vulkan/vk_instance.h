@@ -328,6 +328,11 @@ public:
         return transform_feedback;
     }
 
+    /// gow3: the driver can say why the device was lost (VK_EXT_device_fault).
+    bool IsDeviceFaultSupported() const {
+        return device_fault;
+    }
+
     /// Returns true when the shaderSubgroupClock feature of
     /// gow3: the FSR 4 v07 INT8/DOT4 shaders can run (Float16, Int8, Int16, packed int8 dot
     /// products, linear compute derivatives, extended storage image formats).
@@ -604,6 +609,7 @@ private:
     bool list_restart{};
     bool provoking_vertex{};
     bool transform_feedback{}; // gow3 (stream-out)
+    bool device_fault{};       // gow3: VK_EXT_device_fault, read when the device is lost
     bool shader_stencil_export{};
     bool image_load_store_lod{};
     bool amd_gcn_shader{};

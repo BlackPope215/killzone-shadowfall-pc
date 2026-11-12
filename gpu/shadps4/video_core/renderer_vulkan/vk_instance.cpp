@@ -403,6 +403,18 @@ bool Instance::CreateDevice() {
                 : !StreamOutWanted() ? "off (GOW3_STREAMOUT=0): such draws are skipped"
                                      : "unavailable (no VK_EXT_transform_feedback): such draws "
                                        "are skipped");
+    // gow3: what the driver knows about a lost device (vk_scheduler.cpp prints it).
+    if (std::any_of(available_extensions.begin(), available_extensions.end(),
+                    [](const std::string& name) {
+                        return name == VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
+                    })) {
+        const auto chain = physical_device.getFeatures2<vk::PhysicalDeviceFeatures2,
+                                                        vk::PhysicalDeviceFaultFeaturesEXT>();
+        device_fault = chain.get<vk::PhysicalDeviceFaultFeaturesEXT>().deviceFault &&
+                       add_extension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+    }
+    std::printf("GPU: device fault reports %s\n",
+                device_fault ? "on (VK_EXT_device_fault)" : "unavailable on this driver");
     shader_stencil_export = add_extension(VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME);
     image_load_store_lod = add_extension(VK_AMD_SHADER_IMAGE_LOAD_STORE_LOD_EXTENSION_NAME);
     amd_gcn_shader = !amd_paths_off.shaderext && add_extension(VK_AMD_GCN_SHADER_EXTENSION_NAME);
@@ -738,6 +750,9 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceTransformFeedbackFeaturesEXT{
             .transformFeedback = true, // gow3 (stream-out)
         },
+        vk::PhysicalDeviceFaultFeaturesEXT{
+            .deviceFault = true, // gow3
+        },
         vk::PhysicalDeviceVertexAttributeDivisorFeatures{
             .vertexAttributeInstanceRateDivisor = true,
         },
@@ -833,6 +848,9 @@ bool Instance::CreateDevice() {
     }
     if (!transform_feedback) {
         device_chain.unlink<vk::PhysicalDeviceTransformFeedbackFeaturesEXT>();
+    }
+    if (!device_fault) {
+        device_chain.unlink<vk::PhysicalDeviceFaultFeaturesEXT>();
     }
     if (!maintenance_5) {
         device_chain.unlink<vk::PhysicalDeviceMaintenance5FeaturesKHR>();
