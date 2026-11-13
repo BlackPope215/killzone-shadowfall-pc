@@ -17,6 +17,14 @@ patches.py finds it by content.
 Other {0, 0, 1920, 1080} rectangles (0x50a0d3, 0xe80a9b, 0xe843b7, 0xfc39e3, 0xfc8773, 0xfc87ff)
 are not needed; patching them all made level loads hang.
 The FOV is a live setting of the loader (src/mouse_hook.h gow3_fov_site), not a patch here.
+Title IDs: the file declares CUSA00190 only, on purpose. The port picks this file for every
+region (scripts/patches.py GAMES) and finds each site by its Pattern, so a build whose code differs
+skips the patch. Other tools (shadPS4) write at the Address without checking: listing untested
+regions here would let them patch the wrong bytes.
+Scene memory and resolution patches write the same arena/rw/rest values: scripts/patches.py
+selected_patches keeps one sizing.
+The "Private Multiplayer" blocks at the end of the XML are written by hand, not by this script:
+regenerating the file drops them; copy them back.
 Usage: make_kzsf_res_patches.py <eboot.elf> <out.xml>
 """
 import sys
@@ -41,9 +49,12 @@ SIZES = {'720p': (1280, 720, 0, 0), '1440p': (2560, 1440, 384, 8), '1800p': (320
          '4K': (3840, 2160, 1280, 32)}
 # Upscaler quality modes (launcher, scripts/upscale_modes.py): render sizes below 1080p that
 # FSR / DLSS take to the output. Named by size; no extra memory below 1080p.
+# A size that already has a named patch gets no second one (1280x720 is "720p": the two blocks
+# were byte-identical and both listed).
 SIZES.update({f'{w}x{h}': (w, h, 0, 0) for w, h in
               ((1856, 1044), (1708, 960), (1600, 900), (1488, 836), (1280, 720), (1120, 630), (1066, 600),
-               (960, 540), (852, 480), (640, 360))})
+               (960, 540), (852, 480), (640, 360))
+              if (w, h) not in {(s[0], s[1]) for s in SIZES.values()}})
 # Ultrawide scenes (src/scene_res_hook.h renders the scene at GOW3_RENDER_RES; the display and UI
 # stay 1080p): the memory of a larger scene without the resolution sites, by pixel count over
 # 1080p (run.py picks the smallest that covers the scene). ~430 MiB of video pool per extra 1080p.

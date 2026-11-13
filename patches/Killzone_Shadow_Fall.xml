@@ -125,20 +125,6 @@
             <Line Type="bytes" Address="0x00ce6260" Value="44030000" Pattern="c7 45 a0 80 07 00 00 c7 45 a4 38 04 00 00 c7 45 a8 00 00 00 00 c6 45 ac" At="10"/>
         </PatchList>
     </Metadata>
-    <Metadata Title="Killzone Shadow Fall" Name="Resolution Patch - 1280x720" Note="Game render resolution 1280x720." Author="lesca" PatchVer="0.1" AppVer="01.81" AppElf="eboot.bin" isEnabled="false">
-        <PatchList>
-            <Line Type="bytes" Address="0x013c1a8a" Value="80020000" Pattern="48 b8 c0 03 00 00 1c 02 00 00 c7 83 80 03 00 00 80 07 00 00 c7 83 84 03 00 00 38 04 00 00" At="2"/>
-            <Line Type="bytes" Address="0x013c1a8e" Value="68010000" Pattern="48 b8 c0 03 00 00 1c 02 00 00 c7 83 80 03 00 00 80 07 00 00 c7 83 84 03 00 00 38 04 00 00" At="6"/>
-            <Line Type="bytes" Address="0x013c1a98" Value="00050000" Pattern="48 b8 c0 03 00 00 1c 02 00 00 c7 83 80 03 00 00 80 07 00 00 c7 83 84 03 00 00 38 04 00 00" At="16"/>
-            <Line Type="bytes" Address="0x013c1aa2" Value="d0020000" Pattern="48 b8 c0 03 00 00 1c 02 00 00 c7 83 80 03 00 00 80 07 00 00 c7 83 84 03 00 00 38 04 00 00" At="26"/>
-            <Line Type="bytes" Address="0x013c20d3" Value="00050000" Pattern="c7 87 80 03 00 00 80 07 00 00 c7 87 84 03 00 00 38 04 00 00 48 b8 c0 03 00 00 1c 02 00 00" At="6"/>
-            <Line Type="bytes" Address="0x013c20dd" Value="d0020000" Pattern="c7 87 80 03 00 00 80 07 00 00 c7 87 84 03 00 00 38 04 00 00 48 b8 c0 03 00 00 1c 02 00 00" At="16"/>
-            <Line Type="bytes" Address="0x013c20e3" Value="80020000" Pattern="c7 87 80 03 00 00 80 07 00 00 c7 87 84 03 00 00 38 04 00 00 48 b8 c0 03 00 00 1c 02 00 00" At="22"/>
-            <Line Type="bytes" Address="0x013c20e7" Value="68010000" Pattern="c7 87 80 03 00 00 80 07 00 00 c7 87 84 03 00 00 38 04 00 00 48 b8 c0 03 00 00 1c 02 00 00" At="26"/>
-            <Line Type="bytes" Address="0x00ce6259" Value="00050000" Pattern="c7 45 a0 80 07 00 00 c7 45 a4 38 04 00 00 c7 45 a8 00 00 00 00 c6 45 ac" At="3"/>
-            <Line Type="bytes" Address="0x00ce6260" Value="d0020000" Pattern="c7 45 a0 80 07 00 00 c7 45 a4 38 04 00 00 c7 45 a8 00 00 00 00 c6 45 ac" At="10"/>
-        </PatchList>
-    </Metadata>
     <Metadata Title="Killzone Shadow Fall" Name="Resolution Patch - 1120x630" Note="Game render resolution 1120x630." Author="lesca" PatchVer="0.1" AppVer="01.81" AppElf="eboot.bin" isEnabled="false">
         <PatchList>
             <Line Type="bytes" Address="0x013c1a8a" Value="30020000" Pattern="48 b8 c0 03 00 00 1c 02 00 00 c7 83 80 03 00 00 80 07 00 00 c7 83 84 03 00 00 38 04 00 00" At="2"/>
