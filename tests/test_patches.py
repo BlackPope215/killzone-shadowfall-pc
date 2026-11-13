@@ -87,6 +87,19 @@ class GameProfileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             selected_patches(GOW3, '01.02', 'Resolution Patch - 4K;Resolution Patch - 720p')
 
+    def test_killzone_scene_memory_is_sized_once(self):
+        kzsf = GOW3.parent / 'Killzone_Shadow_Fall.xml'
+        # A resolution patch that sizes the memory drops the scene-memory patch (same three writes).
+        self.assertEqual(selected_patches(kzsf, '01.81', 'Resolution Patch - 4K;Scene memory - 256 MB', only=True),
+                         ['Resolution Patch - 4K'])
+        # Below 1080p the resolution patch leaves the memory alone: both stay.
+        self.assertEqual(selected_patches(kzsf, '01.81', 'Resolution Patch - 720p;Scene memory - 256 MB', only=True),
+                         ['Resolution Patch - 720p', 'Scene memory - 256 MB'])
+        self.assertEqual(selected_patches(kzsf, '01.81', 'Scene memory - 256 MB;Scene memory - 1024 MB', only=True),
+                         ['Scene memory - 1024 MB'])
+        names = {m.get('Name') for m in ET.parse(kzsf).getroot().iter('Metadata')}
+        self.assertNotIn('Resolution Patch - 1280x720', names)  # the same bytes as 720p
+
     def test_profile_by_title_for_any_region(self):
         from unittest import mock
         import patches

@@ -231,6 +231,13 @@ def available_patches(xml, app_version):
 # enable one, never both. A chosen resolution patch replaces the default texture fix.
 EXCLUSIVE_PREFIX='Resolution Patch'
 REPLACED_BY_EXCLUSIVE={'Bug Fix - Texture Corruption Fix'}
+MEMORY_PREFIX='Scene memory'
+
+
+def memory_patch_mb(name):
+    """MiB of a "Scene memory - N MB" patch name (0 when it has no number)."""
+    found=re.search(r'(\d+) MB',name)
+    return int(found.group(1)) if found else 0
 # Fixes with nothing to choose: not offered in the launcher and applied even with its saved list,
 # which predates them (the startup black screen fix sets a value the game overwrites at once).
 ALWAYS_ON={'Bug Fix - Startup Black Screen'}
@@ -247,7 +254,21 @@ def selected_patches(xml, app_version, extra, only=False):
     exclusive=[n for n in names if n.startswith(EXCLUSIVE_PREFIX)]
     if len(exclusive)>1:
         raise ValueError(f'choose one resolution patch, not {exclusive}')
-    return [n for n in names if not (exclusive and n in REPLACED_BY_EXCLUSIVE)]
+    names=[n for n in names if not (exclusive and n in REPLACED_BY_EXCLUSIVE)]
+    # Killzone: the "Scene memory" patches write the same three memory-table values as the
+    # resolution patches above 1080p (tools/make_kzsf_res_patches.py), and the later write won:
+    # a small scene-memory patch after a 4K resolution patch shrank its arena while the DMEM
+    # request stayed at the larger one. One sizing only: a resolution patch that sizes the
+    # memory itself drops them, and of several scene-memory patches the largest stays.
+    memory=[n for n in names if n.startswith(MEMORY_PREFIX)]
+    if memory:
+        sized={m.get('Name') for m in metas if 'DMEM to' in m.get('Note','')}
+        keep=None if any(n in sized for n in exclusive) else max(memory,key=memory_patch_mb)
+        dropped=[n for n in memory if n!=keep]
+        if dropped:
+            print(f'Patches: {dropped} left out: {keep or exclusive[0]} sizes the scene memory',file=sys.stderr)
+        names=[n for n in names if n not in dropped]
+    return names
 
 
 def patch_requirements(xml, names, app_version):
