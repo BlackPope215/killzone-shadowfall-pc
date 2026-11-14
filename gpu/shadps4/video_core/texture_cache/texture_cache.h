@@ -339,6 +339,22 @@ public:
     /// Runs the garbage collector.
     void RunGarbageCollector();
 
+    // gow3 (from SpartanPort): every image is registered in its first page; exact-address
+    // lookups need no other page.
+    template <typename Func>
+    void ForEachImageWithAddress(VAddr cpu_addr, Func&& func) {
+        const auto it = page_table.find(cpu_addr >> Traits::PageBits);
+        if (it == nullptr) {
+            return;
+        }
+        for (const ImageId image_id : *it) {
+            Image& image = slot_images[image_id];
+            if (image.info.guest_address == cpu_addr) {
+                func(image_id, image);
+            }
+        }
+    }
+
     template <typename Func>
     void ForEachImageInRegion(VAddr cpu_addr, size_t size, Func&& func) {
         using FuncReturn = typename std::invoke_result<Func, ImageId, Image&>::type;
