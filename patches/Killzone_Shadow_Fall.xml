@@ -236,7 +236,11 @@
         <PatchList>
             <Line Type="bytes" Address="0x0135b9e3" Value="31c090" Pattern="c5 fa 10 45 90 c5 f8 2e 43 78 77 4a 8b 43 7c eb 12 c5 fa 10 45 90 c5 f8 2e 43 74 77 39" At="12"/>
             <Line Type="bytes" Address="0x0135ba10" Value="9090" Pattern="80 bb 84 00 00 00 00 74 17 48 8d 75 a8 4c 89 ef 48 8b 55 88 8b 4d 10 e8 9b 04 00 00 84 c0 75 04" At="7"/>
-            <!-- Exact cached localizer key; the cave is PLT-to-rodata alignment padding. -->
+            <!-- Exact cached localizer key; the cave is PLT-to-rodata alignment padding. The hook (jmp to the
+                 cave) replaces 8 bytes the cave runs first; the cave's Pattern demands its 82 bytes be zero, so a
+                 build without that padding skips the line. Its exits: 0x135ba2d (name hidden, the target of the
+                 jne at 0x135ba27) and 0x135b6e8 (the instruction after the hook). tests/test_patches.py checks
+                 these addresses. -->
             <Line Type="bytes" Address="0x0135b6e0" Value="e9bb282100909090" Pattern="4d 8b 75 38 c6 45 a7 00 41 f6 86 29 02 00 00 02 0f 85 37 03 00 00" At="0"/>
             <Line Type="bytes" Address="0x0156dfa0" Value="4d8b7538c645a700498b45484885c0743c83780816753648b94875644e616d655f48394810752648b94261736563616d7048394818751681782054757272750d6681782465747505e940dadeffe9f6d6deff" Pattern="ff 25 c2 4b 6f 00 68 2c 02 00 00 e9 20 dd ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00" At="24"/>
         </PatchList>
@@ -252,7 +256,10 @@
     </Metadata>
     <!-- Online matches at 60 Hz ask the renderer for its half-width reprojection (960 wide, rebuilt) and
          turn the game's TAA off (0xd64aa0 -> 0x510e50 / 0x50a1f0); the port's upscalers expect the full
-         scene: keep full width and TAA as in the campaign. -->
+         scene: keep full width and TAA as in the campaign.
+         The site is "cmp r14d, 60; setne bl; sete al": bl = full scene with TAA (true off 60 Hz), al = half-width
+         reprojection (true at 60 Hz, passed on in esi). The patch writes "mov bl, 1; nop; xor al, al; nop": the
+         answer of every other rate, whatever r14d holds. -->
     <Metadata Title="Killzone Shadow Fall" Name="Private Multiplayer - Full Width" Note="Online matches render the full scene, as the campaign (no half-width reprojection)." Author="lesca" PatchVer="1.0" AppVer="01.81" AppElf="eboot.bin" isEnabled="false">
         <PatchList>
             <Line Type="bytes" Address="0x00d64c2b" Value="b3019030c090" Pattern="41 83 fe 3c 0f 95 c3 0f 94 c0 4c 8d 25 ?? ?? ?? ?? 49 8b 7c 24 28 0f b6 f0 e8" At="4"/>

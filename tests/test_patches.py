@@ -100,6 +100,34 @@ class GameProfileTests(unittest.TestCase):
         names = {m.get('Name') for m in ET.parse(kzsf).getroot().iter('Metadata')}
         self.assertNotIn('Resolution Patch - 1280x720', names)  # the same bytes as 720p
 
+    def test_killzone_hud_patch_jumps_land_where_they_should(self):
+        kzsf = GOW3.parent / 'Killzone_Shadow_Fall.xml'
+        meta = next(m for m in ET.parse(kzsf).getroot().iter('Metadata')
+                    if m.get('Name') == 'Private Multiplayer - HUD Visibility')
+        lines = [(int(line.get('Address'), 16), bytes.fromhex(line.get('Value')),
+                  bytes.fromhex(line.get('Pattern').replace(' ', '')), int(line.get('At')))
+                 for line in meta.iter('Line')]
+        hook = next(line for line in lines if line[1][0] == 0xe9)
+        cave = max(lines, key=lambda line: len(line[1]))
+
+        def target(address, code, offset):
+            return address + offset + 5 + int.from_bytes(code[offset + 1:offset + 5], 'little', signed=True)
+        self.assertEqual(target(hook[0], hook[1], 0), cave[0])
+        # The cave only overwrites bytes its own signature requires to be zero (alignment padding).
+        self.assertEqual(cave[2][cave[3]:], bytes(len(cave[1])))
+        # It runs the bytes the hook replaced, then leaves by two jumps: back behind the hook, and to
+        # the branch target of the line patched at 0x135ba10 (jne at 0x135ba27, +4).
+        self.assertEqual(cave[1][:8], hook[2][:8])
+        self.assertEqual(cave[1][-10], 0xe9)
+        self.assertEqual(cave[1][-5], 0xe9)
+        self.assertEqual(target(cave[0], cave[1], len(cave[1]) - 5), hook[0] + len(hook[1]))
+        self.assertEqual(target(cave[0], cave[1], len(cave[1]) - 10), 0x135ba27 + 2 + 4)
+        # Every short branch inside the cave lands on the second exit.
+        last_exit = len(cave[1]) - 5
+        for offset in (15, 21, 37, 53, 62, 70):
+            self.assertIn(cave[1][offset], (0x74, 0x75))
+            self.assertEqual(offset + 2 + cave[1][offset + 1], last_exit)
+
     def test_profile_by_title_for_any_region(self):
         from unittest import mock
         import patches
