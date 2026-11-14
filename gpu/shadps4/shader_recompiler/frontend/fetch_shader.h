@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstring>
 #include <optional>
 #include <vector>
 #include "common/types.h"
@@ -54,6 +55,18 @@ struct FetchShaderData {
     bool operator==(const FetchShaderData& other) const {
         return attributes == other.attributes && vertex_offset_sgpr == other.vertex_offset_sgpr &&
                instance_offset_sgpr == other.instance_offset_sgpr;
+    }
+
+    /// gow3 (from SpartanPort): every attribute's V# still reads as in `sharps`, a copy taken
+    /// earlier (one per attribute, in order).
+    bool SharpsUnchanged(const Shader::Info& info, const AmdGpu::Buffer* sharps) const noexcept {
+        for (size_t i = 0; i < attributes.size(); ++i) {
+            const auto now = attributes[i].GetSharp(info);
+            if (std::memcmp(&now, &sharps[i], sizeof(now)) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     void Serialize(Serialization::Archive& ar) const;
