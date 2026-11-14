@@ -81,7 +81,6 @@ struct XfbDraw {
     std::array<vk::DeviceSize, 4> sizes{};
     std::array<vk::Buffer, 4> counters{};
     std::array<vk::DeviceSize, 4> counter_offsets{};
-    bool no_counters = false; ///< GOW3_STREAMOUT_TEST=2: capture from offset 0, save nothing
 
     /// Inside the render pass, around the draw: binds the buffers and starts the capture at the
     /// counters' offsets; End saves the new offsets.

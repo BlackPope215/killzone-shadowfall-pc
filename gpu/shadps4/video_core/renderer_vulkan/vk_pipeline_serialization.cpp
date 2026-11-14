@@ -1501,12 +1501,6 @@ void PipelineCache::PumpWarmUp() {
                 modules[i] = stage.result;
                 if (stage.fetch) {
                     fetch = stage.fetch; // the vertex stage's; a geometry stage has none
-                } else if (fetch) {
-                    static bool said = false;
-                    if (!said) {
-                        said = true;
-                        std::printf("Preload: fetch shader kept across a later stage\n");
-                    }
                 }
             }
         }

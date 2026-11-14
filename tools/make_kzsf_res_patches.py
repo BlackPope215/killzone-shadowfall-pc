@@ -14,6 +14,9 @@ patches.py finds it by content.
           memory while creating texture"). Larger regions take D from that constant and the patch
           asks for D more direct memory (Note "DMEM to N MB", patches.patch_requirements), so the
           RenderData pool keeps its size. Region names are at 0x11aa319..0x11aa3ad.
+A resolution patch sets the size the game renders at (render and scene always change together,
+half sizes follow), not the window: the port scales that image to the output resolution. The
+memory values depend on that render size only.
 Other {0, 0, 1920, 1080} rectangles (0x50a0d3, 0xe80a9b, 0xe843b7, 0xfc39e3, 0xfc8773, 0xfc87ff)
 are not needed; patching them all made level loads hang.
 The FOV is a live setting of the loader (src/mouse_hook.h gow3_fov_site), not a patch here.
@@ -41,6 +44,9 @@ SITES = [(0xfc1a88, 30, [(2, 'hw'), (6, 'hh'), (16, 'w'), (26, 'h')]),
          (0x32bb34, 12, [(7, 'arena')]),
          (0x32bb4a, 12, [(7, 'rw')]),
          (0x32bb64, 12, [(2, 'rest')])]
+# REST is an immediate the game adds to the total direct memory (rest = total - 0x1a720000 - the
+# other regions), stored as a 32-bit two's complement: a patch that grows arena and rw by D writes
+# (REST - D) & 0xffffffff (unpatched: 00 00 8e e5, little-endian).
 ARENA, RW, REST = 0x19f00000, 0x800000, -0x1a720000
 NATIVE = {'w': 1920, 'h': 1080, 'hw': 960, 'hh': 540, 'arena': ARENA, 'rw': RW, 'rest': REST & 0xffffffff}
 # name: (width, height, extra video pool MiB, extra RW textures MiB): both grow with the pixel

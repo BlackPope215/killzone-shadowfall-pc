@@ -1874,52 +1874,9 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     const u32 num_instances = regs.num_instances.NumInstances();
     const u32 first_vertex = vertex_offset;
     const u32 first_instance = instance_offset;
-    // gow3 (stream-out): what the first stream-out draws fetch their vertices with. A GPU page
-    // fault (read) on AMD came from executing these draws, capture or not.
-    if (regs.vgt_strmout_config.raw != 0) [[unlikely]] {
-        static u32 logged_draws = 0;
-        if (logged_draws < 12) {
-            ++logged_draws;
-            const auto& vb = vertex_binds;
-            std::printf("Stream-out: draw call: %s, %s, %u indices, %u instances, first vertex %u "
-                        "(%#x), first instance %u, index offset %u, %u vertex buffers:",
-                        used_prepared ? "pipeline from a worker" : "pipeline looked up here",
-                        is_indexed ? "indexed" : "not indexed", num_indices, num_instances,
-                        first_vertex, first_vertex, first_instance, index_offset,
-                        u32(vb.num_buffers));
-            for (u32 i = 0; i < vb.num_buffers && i < vb.host_sizes.size(); ++i) {
-                std::printf(" [%u: arena offset %#llx, %llu bytes, stride %llu]", i,
-                            static_cast<unsigned long long>(vb.host_offsets[i]),
-                            static_cast<unsigned long long>(vb.host_sizes[i]),
-                            static_cast<unsigned long long>(vb.host_strides[i]));
-            }
-            // Where a missing fetch shader comes from: the shader's own record (set when it
-            // was translated, or read from the disk cache) and a parse of the code right now.
-            const bool parsed_now = Shader::Gcn::ParseFetchShader(vs_info).has_value();
-            std::printf("; shader record: has fetch %d (sgpr %u), parsed now %d, user data %08x "
-                        "%08x", int(vs_info.has_fetch_shader), vs_info.fetch_shader_sgpr_base,
-                        int(parsed_now), vs_info.user_data.size() > 0 ? vs_info.user_data[0] : 0,
-                        vs_info.user_data.size() > 1 ? vs_info.user_data[1] : 0);
-            std::printf("; fetch shader %s, vs hash %08x; index buffer guest %#llx, type %u, "
-                        "max %u indices, bound at arena offset %#llx (vk type %d)\n",
-                        fetch_shader ? "yes" : "none", u32(vs_info.pgm_hash),
-                        static_cast<unsigned long long>(regs.index_base_address.Address<u64>()),
-                        u32(regs.index_buffer_type.raw), regs.max_index_size,
-                        static_cast<unsigned long long>(index_bind.offset),
-                        int(index_bind.type));
-            std::fflush(stdout);
-        }
-    }
     // gow3: GOW3_SKIP_FILE (vk_shader_skip.h) drops listed shaders to bisect an artifact.
     const auto* skip_ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
     bool skip_draw = ShaderSkip::Skip(vs_info.pgm_hash, skip_ps ? skip_ps->pgm_hash : 0);
-    // gow3: GOW3_STREAMOUT_TEST=3: stream-out draws do everything but the draw call itself
-    // (pipeline built, state and buffers bound), to tell the draw from its preparation.
-    static const bool streamout_no_draw = [] {
-        const char* env = std::getenv("GOW3_STREAMOUT_TEST");
-        return env && std::atoi(env) == 3;
-    }();
-    skip_draw |= streamout_no_draw && regs.vgt_strmout_config.raw != 0;
     // gow3: GOW3_OCCLUSION=real (vk_occlusion.h): occlusion test draws run in a query, and a
     // predicated draw whose test found nothing visible is dropped.
     s32 query = -1;
@@ -3006,34 +2963,6 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
     for (u32 buffer_index = 0; buffer_index < stage.buffers.size(); ++buffer_index) {
         const auto& desc = stage.buffers[buffer_index];
         const RingBinding* ring = num_ring_stages ? FindRingBinding(stage, buffer_index) : nullptr;
-        // gow3 (stream-out): every buffer the stages of the first stream-out draws bind. The GPU
-        // page fault of those draws read an address that is no buffer's (0x1bf800000).
-        if (Regs().vgt_strmout_config.raw != 0) [[unlikely]] {
-            static u32 logged_binds = 0;
-            if (logged_binds < 48) {
-                ++logged_binds;
-                if (desc.IsSpecial() || ring) {
-                    std::printf("Stream-out: bind: shader %08x stage %u buffer %u: %s type %u, "
-                                "written %d, dma %d\n",
-                                u32(stage.pgm_hash), u32(stage.sw_stage), buffer_index,
-                                ring ? "constant ring copy" : "special", u32(desc.buffer_type),
-                                int(desc.is_written), int(stage.uses_dma));
-                } else {
-                    const auto sharp =
-                        prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
-                    std::printf("Stream-out: bind: shader %08x stage %u buffer %u: guest %#llx, "
-                                "%llu bytes (stride %u, records %u), type %u, written %d, dma %d, "
-                                "%s\n",
-                                u32(stage.pgm_hash), u32(stage.sw_stage), buffer_index,
-                                static_cast<unsigned long long>(sharp.base_address),
-                                static_cast<unsigned long long>(sharp.GetSize()),
-                                u32(sharp.GetStride()), u32(sharp.num_records),
-                                u32(desc.buffer_type), int(desc.is_written), int(stage.uses_dma),
-                                prepared ? "prepared" : "from the shader's tables");
-                }
-                std::fflush(stdout);
-            }
-        }
         if (ring) {
             // Copied by the GPU command thread into the constant ring (read-only).
             // gow3: dump the ring's own copy, not the guest address. A binding whose bytes came
