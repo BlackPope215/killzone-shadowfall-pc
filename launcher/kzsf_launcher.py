@@ -1095,11 +1095,14 @@ def game_env(settings, graphics, needs_update):
         'GOW3_PARALLEL_WARMUP': os.environ.get('GOW3_PARALLEL_WARMUP', '1'),
         # Performance (2026-10-21 measurements): the two-stage draw pipeline, and libc's copy
         # routine (0x3d99a2) writing next to a compute shader's output without a GPU readback.
+        # 0x2f8246 (2026-11-14): the game's per-frame write at 0x21ae00018/40, on the page where
+        # shader fbf186b147497c6c writes 8 bytes at +0x50; each write waited ~11 ms for the GPU
+        # (about half of every frame at 70-90 FPS).
         # A variable set before the launcher starts (test .bat files) wins.
         'GOW3_DRAW_PIPE': os.environ.get(
             'GOW3_DRAW_PIPE', '1' if settings.get('draw_pipe', True) else '0'),
         'GOW3_NOWAIT_WRITES': os.environ.get(
-            'GOW3_NOWAIT_WRITES', '3d99a2' if settings.get('nowait_writes', True) else ''),
+            'GOW3_NOWAIT_WRITES', '3d99a2,2f8246' if settings.get('nowait_writes', True) else ''),
         # PR #96 (clearfeather): rwlock bookkeeping split over 256 locks instead of one.
         'GOW3_RWLOCK_FAST': os.environ.get(
             'GOW3_RWLOCK_FAST', '1' if settings.get('fast_locks', True) else '0'),

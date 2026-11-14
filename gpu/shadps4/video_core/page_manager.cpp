@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <boost/container/small_vector.hpp>
 #include "gow3_toggles.h"
 #include "common/assert.h"
@@ -21,6 +25,7 @@
 #include "core/signals.h"
 #include "video_core/page_manager.h"
 #include "video_core/page_state.h"
+#include "video_core/renderer_vulkan/vk_draw_prep.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 
 #ifndef _WIN64
@@ -192,12 +197,42 @@ struct PageManager::Impl {
         return std::find(sites.begin(), sites.end(), offset) != sites.end();
     }
 
+    static bool WorkerFaultSkip() {
+        static const bool on = [] {
+            const char* env = std::getenv("GOW3_PREP_FAULT_SKIP");
+            return !env || env[0] != '0';
+        }();
+        return on;
+    }
+
     static bool HandleGuestFault(void* context, void* fault_address) {
         const auto addr = reinterpret_cast<VAddr>(fault_address);
         // gow3: the draw recording thread handles its faults inline too (vk_draw_pipe.h).
         const auto is_gpu_thread = rasterizer->IsGpuSideThread();
         if (is_gpu_thread) {
             Gow3Stats::gpu_signal_faults.fetch_add(1, std::memory_order_relaxed);
+        } else if (runtime_fault_recover && Vulkan::DrawPreparation::OnWorkerThread() &&
+                   WorkerFaultSkip()) {
+            // gow3 (from SpartanPort 21db7f29, Supermedo/bloodborne_pc a39f457a5): a
+            // draw-preparation worker reads ahead of the GPU thread while holding the shader
+            // cache's lock, which the GPU thread takes to add a shader. Serving the fault
+            // would drain the draw pipe and download from the GPU: waiting for the GPU thread
+            // while blocking it. The worker goes back to its recovery point (src/probe.c) and
+            // the GPU thread prepares that draw itself. GOW3_PREP_FAULT_SKIP=0: served as before.
+            static std::atomic<u64> skipped{0};
+            static std::atomic<s64> last_report{0};
+            const u64 count = skipped.fetch_add(1, std::memory_order_relaxed) + 1;
+            const s64 now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
+            s64 last = last_report.load(std::memory_order_relaxed);
+            if (now - last >= 5000 &&
+                last_report.compare_exchange_strong(last, now, std::memory_order_relaxed)) {
+                std::printf("Draw preparation: %llu worker faults on GPU-tracked pages left to "
+                            "the GPU thread in all\n",
+                            static_cast<unsigned long long>(count));
+            }
+            return false;
         }
         if (Common::IsWriteError(context)) {
             Gow3Stats::Timer timer{Gow3Stats::t_write_faults};

@@ -77,9 +77,8 @@ StagingBufferRef StagingBufferPool::RequestFromRing(Ring& ring, u64 size, u64 al
                                                     MemoryType type) {
     Block* best{};
     u64 best_offset{};
-    const size_t start = type == MemoryType::DeviceLocal ? 0 : ring.current;
     for (size_t i = 0; i < ring.blocks.size(); ++i) {
-        const size_t index = (start + i) % ring.blocks.size();
+        const size_t index = (ring.current + i) % ring.blocks.size();
         Block* block = &ring.blocks[index];
         if (const auto offset = block->buffer->Reserve(size, alignment, false)) {
             ring.current = index;
@@ -169,6 +168,11 @@ void StagingBufferPool::FreeDeferred(const StagingBufferRef& ref) {
 
 void StagingBufferPool::TickFrame() {
     ++frame;
+    // gow3 (from SpartanPort 23d457f5): each frame the VRAM ring starts again at its first block,
+    // so the blocks a burst of uploads added fall idle and are trimmed. Within a frame requests
+    // go on from the last block that had room, so a burst does not probe every full block again
+    // for each request.
+    rings[u32(MemoryType::DeviceLocal)].current = 0;
     for (size_t i = 0; i < NUM_TYPES; ++i) {
         const bool device = i == u32(MemoryType::DeviceLocal);
         TrimRing(rings[i], device ? keep_device_blocks : keep_blocks,

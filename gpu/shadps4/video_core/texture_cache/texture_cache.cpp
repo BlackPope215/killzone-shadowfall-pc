@@ -1282,10 +1282,9 @@ bool TextureCache::HasGpuModifiedImage(VAddr address, size_t size) {
 
 ImageId TextureCache::FindImageFromRange(VAddr address, size_t size, bool ensure_valid) {
     ImageIds image_ids;
-    ForEachImageInRegion(address, size, [&](ImageId image_id, Image& image) {
-        if (image.info.guest_address != address) {
-            return;
-        }
+    // gow3 (from SpartanPort 964cfa94, shadPS4 #5240): exact-address candidates all occur in
+    // the first page of the range.
+    ForEachImageWithAddress(address, [&](ImageId image_id, Image& image) {
         if (ensure_valid && !image.SafeToDownload()) {
             return;
         }
