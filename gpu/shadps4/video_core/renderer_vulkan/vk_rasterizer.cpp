@@ -2618,6 +2618,14 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
                 !Gow3Toggle::Disabled(Gow3Toggle::PreparedResources)
             ? &prepared->vertex
             : nullptr;
+    // gow3 (from SpartanPort): TryPreparedPipeline compared the V#s when the pipeline was
+    // chosen, but a write queued before this draw can change the table after that: they are
+    // read again then.
+    if (ready && PreparedVertexCheck() &&
+        !fetch->SharpsUnchanged(pipeline->GetStage(Shader::SwStage::Vertex), ready->buffers)) {
+        NoteStaleVertexInputs();
+        ready = nullptr;
+    }
     if (ready) {
         attributes.assign(ready->attributes, ready->attributes + ready->count);
         bindings.assign(ready->bindings, ready->bindings + ready->count);

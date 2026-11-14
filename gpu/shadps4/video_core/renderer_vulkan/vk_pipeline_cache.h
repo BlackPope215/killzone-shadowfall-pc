@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
+#include <cstdlib>
 #include <array>
 #include <optional>
 
@@ -155,6 +156,18 @@ struct PrepWorker {
 };
 
 struct PreparedDraw;
+
+/// gow3 (from SpartanPort): counts prepared draws whose V#s were stale; logs the total every 5 s
+/// at most.
+void NoteStaleVertexInputs();
+/// GOW3_PREP_VERTEX_CHECK=0 turns the stale V# comparisons of prepared draws off.
+inline bool PreparedVertexCheck() {
+    static const bool on = [] {
+        const char* env = std::getenv("GOW3_PREP_VERTEX_CHECK");
+        return !env || env[0] != '0';
+    }();
+    return on;
+}
 
 class PipelineCache {
 public:

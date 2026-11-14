@@ -1408,6 +1408,25 @@ bool PipelineCache::PrepareGraphicsPipeline(PipelineSelection& worker_sel) {
     return ok;
 }
 
+// gow3 (from SpartanPort, FelipePrado0/SpartanPort bc78995e and e1594f63; first found in
+// ayozetr/bloodborne_linux and Jgamrot/bloodborne_pc): prepared draws whose vertex buffer
+// descriptors (V#s) changed after a worker read them, reported every 5 s at most.
+void NoteStaleVertexInputs() {
+    static std::atomic<u64> stale{0};
+    static std::atomic<s64> last_report{0};
+    const u64 count = stale.fetch_add(1, std::memory_order_relaxed) + 1;
+    const s64 now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count();
+    s64 last = last_report.load(std::memory_order_relaxed);
+    if ((last != 0 && now - last < 5000) ||
+        !last_report.compare_exchange_strong(last, now, std::memory_order_relaxed)) {
+        return;
+    }
+    std::printf("Vertex inputs: %llu prepared draws in all had stale V#s and read them again\n",
+                static_cast<unsigned long long>(count));
+}
+
 const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& prepared) {
     const auto miss = [](PrepMiss why) -> const GraphicsPipeline* {
         ++g_gow3_prep_miss[u32(why)];
@@ -1438,11 +1457,11 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
     if (prepared.reg_checksum != liverpool->gfx_reg_checksum) {
         return miss(PrepMiss::Checksum);
     }
-    // gow3 (stream-out): geometry shader draws are looked up here, not taken from a worker.
-    // A worker reads the vertex stage's fetch shader from guest memory ahead of the GPU thread;
-    // read too early it finds none, and the pipeline it picks has no vertex inputs. Nothing
-    // above compares that, so the draw ran without its vertex buffer: a GPU page fault on AMD
-    // (device lost on Killzone's stream-out draws, in most runs). GOW3_PREP_GS=1: as before.
+    // gow3 (stream-out): geometry shader draws are looked up here, not taken from a worker
+    // (a dozen draws per frame in Killzone). Added while hunting a device loss on AMD whose
+    // cause turned out to be the pipeline preload (vk_pipeline_serialization.cpp, the fetch
+    // shader of a vertex stage followed by a geometry stage); kept because every run since was
+    // tested with it. GOW3_PREP_GS=1: prepared like other draws.
     static const bool prepare_gs = [] {
         const char* env = std::getenv("GOW3_PREP_GS");
         return env && env[0] == '1';
@@ -1486,7 +1505,28 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
     if (it->second->IsFastLinked() && !pending_graphics.contains(prepared.key)) {
         return miss(PrepMiss::Pipeline);
     }
-    return it->second.get();
+    const GraphicsPipeline* pipeline = it->second.get();
+    // gow3 (from SpartanPort): the V# table is guest memory behind a user-data pointer, so the
+    // checks above do not cover it. A worker that read the V#s before the game rewrote the
+    // table chose the vertex shader's specialization and the vertex inputs from stale V#s
+    // (wrong addresses or strides: stretched polygons). Such a draw takes the regular path.
+    // ResolveVertexBuffers compares once more when the draw is recorded. GOW3_PREP_VERTEX_CHECK=0
+    // turns both comparisons off.
+    const auto& fetch = pipeline->GetFetchShader();
+    if (fetch && PreparedVertexCheck()) {
+        // Inputs left invalid (a V# format with no Vulkan format): only the regular path checks
+        // the formats and skips such a draw.
+        if (!prepared.vertex.valid) {
+            return miss(PrepMiss::Pipeline);
+        }
+        if (fetch->attributes.size() == prepared.vertex.count &&
+            !fetch->SharpsUnchanged(pipeline->GetStage(Shader::SwStage::Vertex),
+                                    prepared.vertex.buffers)) {
+            NoteStaleVertexInputs();
+            return miss(PrepMiss::Pipeline);
+        }
+    }
+    return pipeline;
 }
 
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params,
