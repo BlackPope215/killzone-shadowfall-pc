@@ -430,7 +430,7 @@ vk::ImageView SceneTargets::View(Entry& e, const VideoCore::Image& original,
     return result;
 }
 SceneTargets::Target SceneTargets::Attachment(VideoCore::ImageId id,
-                                               const VideoCore::ImageViewInfo& info) {
+                                               const VideoCore::ImageViewInfo& info, bool writes) {
     auto& original = *lookup(id, 0);
     auto& e = Get(id, info.range.base.level);
     const bool depth = original.info.props.is_depth;
@@ -444,7 +444,14 @@ SceneTargets::Target SceneTargets::Attachment(VideoCore::ImageId id,
             depth ? vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite
                   : vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite);
     }
-    e.state.ProxyWrite();
+    // A depth attachment without depth/stencil writes (soft particles, after The Order port
+    // c01b2ba) leaves the native image current: no resolve before every such draw.
+    // GOW3_DEPTH_READONLY_PROXY=0 restores the old behaviour.
+    static const bool readonly_proxy = [] {
+        const char* v = std::getenv("GOW3_DEPTH_READONLY_PROXY");
+        return !(v && v[0] == '0');
+    }();
+    if (writes || !depth || !readonly_proxy) e.state.ProxyWrite();
     auto attachment_info = info;
     attachment_info.is_storage = true; // include stencil in attachment views
     return {e.image, View(e, original, attachment_info), e.layout, e.image.image_ci.usage};
