@@ -290,14 +290,14 @@ public:
         return on;
     }
 
-    /// Returns true if the subgroup size can be set to match the guest's (64) in every stage.
-    /// gow3 (after SotC 71ae8c2): only when the driver lets a size be required in the vertex,
-    /// fragment and compute stages alike. A driver that allows it only for compute made the old
-    /// code require 64 in graphics stages (invalid) while the compute shaders skipped the wave64
-    /// lowering: random colours on fog, particles and characters.
+    /// Returns true if the subgroup size can be set to match the guest's (64).
+    /// gow3 (after SotC 71ae8c2): only when the driver lets a size be required in the fragment
+    /// and compute stages, the ones whose guest code uses wave-wide operations; other stages are
+    /// pinned only where allowed (CanRequireSubgroupSize). AMD's Windows driver allows fragment
+    /// and compute but not vertex (0xf0): requiring vertex as well sent compute down the 32-lane
+    /// path, and a long session ended in a GPU hang (device lost) there.
     bool IsSubgroupSize64Supported() const {
-        constexpr auto stages = vk::ShaderStageFlagBits::eVertex |
-                                vk::ShaderStageFlagBits::eFragment |
+        constexpr auto stages = vk::ShaderStageFlagBits::eFragment |
                                 vk::ShaderStageFlagBits::eCompute;
         return vk13_features.subgroupSizeControl && vk13_props.maxSubgroupSize >= 64 &&
                (!SubgroupStageCheck() ||
