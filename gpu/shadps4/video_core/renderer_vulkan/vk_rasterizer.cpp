@@ -1642,7 +1642,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
 void Rasterizer::DiagPassBoundary(bool force) {
     static const bool enabled = [] {
         const char* env = std::getenv("GOW3_DIAG_IMAGES");
-        return env && *env == '1';
+        return env && (*env == '1' || *env == '2'); // 2: statistics only
     }();
     if (!enabled) {
         return;
@@ -2183,7 +2183,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     // it, while a frame capture records (GOW3_CAPTURE_TRIGGER).
     static const bool diag_images = [] {
         const char* env = std::getenv("GOW3_DIAG_IMAGES");
-        return env && *env == '1';
+        return env && (*env == '1' || *env == '2'); // 2: statistics only
     }();
     if (diag_images && FrameCapture::IsRecording()) {
         char tag[32];
