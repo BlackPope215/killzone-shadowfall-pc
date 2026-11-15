@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <cstdlib>
 #include "common/backports.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
@@ -48,7 +47,7 @@ Id EmitFPMax32(EmitContext& ctx, Id a, Id b) {
 }
 
 Id EmitFPMax64(EmitContext& ctx, Id a, Id b) {
-    return ctx.OpNMax(ctx.F64[1], a, b); // gow3: NaN-avoiding like V_MAX_F64 (FMax: undefined)
+    return ctx.OpFMax(ctx.F64[1], a, b);
 }
 
 Id EmitFPMin32(EmitContext& ctx, Id a, Id b) {
@@ -56,38 +55,25 @@ Id EmitFPMin32(EmitContext& ctx, Id a, Id b) {
 }
 
 Id EmitFPMin64(EmitContext& ctx, Id a, Id b) {
-    return ctx.OpNMin(ctx.F64[1], a, b); // gow3: NaN-avoiding like V_MIN_F64 (FMin: undefined)
-}
-
-// gow3: V_MIN3/MAX3/MED3_F32 return a number when an operand is NaN, as the NMin/NMax chain
-// does. The AMD trinary instructions (FMin3AMD...) leave NaN undefined, and AMD's driver passes
-// it on: a light term that is NaN at the edge of a light volume (where the volume meets the
-// wall) drew purple stair-stepped lines along spot-light cones, on AMD only (#51, #69).
-// GOW3_FLOAT_TRINARY=1 uses the AMD instructions again (shader cache must be cleared).
-static bool FloatTrinary(const EmitContext& ctx) {
-    static const bool wanted = [] {
-        const char* v = std::getenv("GOW3_FLOAT_TRINARY");
-        return v && v[0] == '1';
-    }();
-    return wanted && ctx.profile.supports_trinary_minmax;
+    return ctx.OpFMin(ctx.F64[1], a, b);
 }
 
 Id EmitFPMinTri32(EmitContext& ctx, Id a, Id b, Id c) {
-    if (FloatTrinary(ctx)) {
+    if (ctx.profile.supports_trinary_minmax) {
         return ctx.OpFMin3AMD(ctx.F32[1], a, b, c);
     }
     return ctx.OpNMin(ctx.F32[1], a, ctx.OpNMin(ctx.F32[1], b, c));
 }
 
 Id EmitFPMaxTri32(EmitContext& ctx, Id a, Id b, Id c) {
-    if (FloatTrinary(ctx)) {
+    if (ctx.profile.supports_trinary_minmax) {
         return ctx.OpFMax3AMD(ctx.F32[1], a, b, c);
     }
     return ctx.OpNMax(ctx.F32[1], a, ctx.OpNMax(ctx.F32[1], b, c));
 }
 
 Id EmitFPMedTri32(EmitContext& ctx, Id a, Id b, Id c) {
-    if (FloatTrinary(ctx)) {
+    if (ctx.profile.supports_trinary_minmax) {
         return ctx.OpFMid3AMD(ctx.F32[1], a, b, c);
     }
     const Id mmx{ctx.OpNMin(ctx.F32[1], ctx.OpNMax(ctx.F32[1], a, b), c)};
@@ -190,8 +176,7 @@ Id EmitFPClamp32(EmitContext& ctx, Id value, Id min_value, Id max_value) {
 }
 
 Id EmitFPClamp64(EmitContext& ctx, Id value, Id min_value, Id max_value) {
-    // gow3: NaN-avoiding like the F32 clamp (FClamp is undefined for NaN).
-    return ctx.OpNMin(ctx.F64[1], ctx.OpNMax(ctx.F64[1], value, min_value), max_value);
+    return ctx.OpFClamp(ctx.F64[1], value, min_value, max_value);
 }
 
 Id EmitFPRoundEven32(EmitContext& ctx, Id value) {
