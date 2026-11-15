@@ -115,6 +115,14 @@ void Translator::EmitScalarAlu(const GcnInst& inst) {
                          inst.src[0].field == OperandField::ExecLo)) {
                 break;
             }
+            // Quads only exist in pixel and compute stages (quad operations elsewhere need a
+            // device feature): other stages get a plain copy.
+            if (info.hw_stage != HwStage::Fragment && info.hw_stage != HwStage::Compute) {
+                const IR::U64 src{GetSrc64(inst.src[0])};
+                SetDst64(inst.dst[0], src);
+                ir.SetScc(ir.InverseBallot(src));
+                return;
+            }
             // Masks are per-lane booleans for the recompiler, so the growth is per lane: a lane
             // is set when any lane of its quad has its bit.
             const IR::U1 bit{ir.InverseBallot(GetSrc64(inst.src[0]))};

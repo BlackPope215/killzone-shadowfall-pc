@@ -55,9 +55,14 @@ static int32_t error(int e) {
  * so the locks and threads the game uses all the time stop sitting behind every one created
  * since boot. What is found does not change. GOW3_REGISTRY_FRONT=0 keeps the old order. */
 static int registry_front(void) {
-    static int on=-1;
-    if (on<0) { const char *v=getenv("GOW3_REGISTRY_FRONT"); on=!(v && v[0]=='0'); }
-    return on;
+    static int on=-1; /* threads under different locks may race here: atomic, same value */
+    int v=__atomic_load_n(&on,__ATOMIC_RELAXED);
+    if (v<0) {
+        const char *e=getenv("GOW3_REGISTRY_FRONT");
+        v=!(e && e[0]=='0');
+        __atomic_store_n(&on,v,__ATOMIC_RELAXED);
+    }
+    return v;
 }
 static Rwlock *find_locked(Rwlock *handle) {
     for (Rwlock **link=&registry; *link; link=&(*link)->next) {
