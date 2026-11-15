@@ -48,11 +48,16 @@ class Instance;
 class Runtime;
 class Scheduler;
 
-/// GOW3_STREAMOUT, read once: default on, 0 restores the old skip.
+/// GOW3_STREAMOUT, read once: default off, 1 turns the capture on.
+///
+/// gow3: the capture works (the device loss it caused on AMD was a pipeline-cache defect, fixed
+/// in vk_pipeline_serialization.cpp), but the meshes it feeds back are drawn wrong: thin dashed
+/// slivers along triangle edges, magenta on the ground and white on crates, where the original
+/// port draws nothing at all. Skipping those draws is the better picture until that is found.
 inline bool StreamOutWanted() {
     static const bool wanted = [] {
         const char* env = std::getenv("GOW3_STREAMOUT");
-        return !(env && env[0] == '0');
+        return env && env[0] == '1';
     }();
     return wanted;
 }
