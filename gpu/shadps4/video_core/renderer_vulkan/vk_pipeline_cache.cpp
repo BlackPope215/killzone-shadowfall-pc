@@ -1591,21 +1591,6 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             } else {
                 StartOptimized(std::move(build), sel.graphics_key);
             }
-            // spartanport: a stale descriptor's data/number format pair has no vertex format
-            // whose numeric type matches the shader input; skip the draw.
-            const auto& buffer = attrib.GetSharp(*vs_info);
-            if (buffer.GetDataFmt() != AmdGpu::DataFormat::FormatInvalid &&
-                Vulkan::LiverpoolToVK::TrySurfaceFormat(
-                    buffer.GetDataFmt(), buffer.GetNumberFmt()) == vk::Format::eUndefined) {
-                static std::atomic<u32> reported{0};
-                if (!sel.worker && reported.fetch_add(1, std::memory_order_relaxed) < 5) {
-                    LOG_WARNING(Render_Vulkan,
-                                "Draw skipped: vertex data_format={} num_format={} has no format",
-                                static_cast<u32>(buffer.GetDataFmt()),
-                                static_cast<u32>(buffer.GetNumberFmt()));
-                }
-                return false;
-            }
         }
         if (linked) {
             return linked;
@@ -2004,6 +1989,26 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
     }
 
     const auto* vs_info = sel.infos[static_cast<u32>(SwStage::Vertex)];
+    // spartanport 4d153594: a stale descriptor's data/number format pair has no vertex format
+    // whose numeric type matches the shader input (SurfaceFormat would stop the game); skip the
+    // draw. gow3: its own loop, as this port's RefreshGraphicsKey has none before this point.
+    if (vs_info && sel.fetch_shader) {
+        for (const auto& attrib : sel.fetch_shader->attributes) {
+            const auto& buffer = attrib.GetSharp(*vs_info);
+            if (buffer.GetDataFmt() != AmdGpu::DataFormat::FormatInvalid &&
+                Vulkan::LiverpoolToVK::TrySurfaceFormat(
+                    buffer.GetDataFmt(), buffer.GetNumberFmt()) == vk::Format::eUndefined) {
+                static std::atomic<u32> reported{0};
+                if (!sel.worker && reported.fetch_add(1, std::memory_order_relaxed) < 5) {
+                    LOG_WARNING(Render_Vulkan,
+                                "Draw skipped: vertex data_format={} num_format={} has no format",
+                                static_cast<u32>(buffer.GetDataFmt()),
+                                static_cast<u32>(buffer.GetNumberFmt()));
+                }
+                { g_gow3_fail_line = __LINE__; return false; }
+            }
+        }
+    }
     if (vs_info && sel.fetch_shader && !instance.IsVertexInputDynamicState()) {
         // Without vertex input dynamic state, the pipeline needs to specialize on format.
         // Stride will still be handled outside the pipeline using dynamic state.
