@@ -1293,7 +1293,11 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             view_mip = -1;
             view_slice = -1;
 
-            const auto& merged_info = image_id ? slot_images[image_id].info : info;
+            // gow3 (from the Uncharted port): a copy, not a reference into slot_images:
+            // ResolveOverlap can insert an image (ExpandImage, ResolveDepthOverlap), which moves
+            // every image when the slot vector grows, and the reference would then read freed
+            // memory.
+            const ImageInfo merged_info = image_id ? slot_images[image_id].info : info;
             auto [overlap_image_id, overlap_view_mip, overlap_view_slice] =
                 ResolveOverlap(merged_info, desc.type, cache_id, image_id, desc.needs_native);
             if (overlap_image_id) {
