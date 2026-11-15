@@ -23,10 +23,12 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
     const auto debug_str = GetDebugString();
 
     const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_size_ci = {
-        .requiredSubgroupSize = 64,
+        .requiredSubgroupSize = instance.IsSubgroupSize64Supported() ? 64u : 32u,
     };
+    const bool require_size =
+        instance.IsSubgroupSize64Supported() || instance.IsComputeSubgroupSize32Required();
     const vk::PipelineShaderStageCreateInfo shader_ci = {
-        .pNext = instance.IsSubgroupSize64Supported() ? &subgroup_size_ci : nullptr,
+        .pNext = require_size ? &subgroup_size_ci : nullptr,
         .stage = vk::ShaderStageFlagBits::eCompute,
         .module = module,
         .pName = "main",

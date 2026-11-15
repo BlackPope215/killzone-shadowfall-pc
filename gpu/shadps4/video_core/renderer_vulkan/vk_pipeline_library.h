@@ -217,6 +217,8 @@ struct FastLinkState {
     tsl::robin_map<GraphicsPipelineKey, std::shared_ptr<AsyncGraphicsCompilation>> pending;
     /// Keys never fast-linked: unsupported state or a failed link.
     tsl::robin_set<GraphicsPipelineKey> ineligible;
+    /// gow3: optimized compiles the driver refused; their working fast link stays in use.
+    tsl::robin_set<GraphicsPipelineKey> refused;
     /// Probe found a shader part missing at this library generation.
     tsl::robin_map<GraphicsPipelineKey, u64> missing;
     /// Fast-linked pipelines replaced by the optimized one, or never used (the optimized came

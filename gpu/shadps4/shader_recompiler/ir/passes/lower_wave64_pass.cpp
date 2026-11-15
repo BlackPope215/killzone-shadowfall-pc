@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <algorithm>
 #include <optional>
 #include <string>
@@ -306,12 +309,51 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
         return;
     }
     const bool bp06 = Common::Backports::On(Common::Backports::Id::MaximalReconvergence);
-    if (profile.subgroup_size == 64 && !bp06) {
-        return;
-    }
-
     const auto [size_x, size_y, size_z] = runtime_info.hw.cs.workgroup_size;
     const u32 num_threads = size_x * size_y * size_z;
+    if (profile.subgroup_size == 64) {
+        // gow3 (after SotC 5712cee): on a 64-wide host a workgroup smaller than a wave runs in
+        // one subgroup whose lanes past the workgroup size do not exist, but the guest's
+        // "readlane 32" that merges the two halves of a reduction still reads one. The driver
+        // returns a stale register: particles, fog and characters got random colours on AMD.
+        // Fold those reads (reduction identity, or onto an existing lane), with or without BP06.
+        // GOW3_ABSENT_LANES=0 turns it off.
+        static const bool fold_absent = [] {
+            const char* v = std::getenv("GOW3_ABSENT_LANES");
+            return !(v && v[0] == '0');
+        }();
+        if (fold_absent && num_threads > 0 && num_threads < 64) {
+            u32 folded = 0;
+            for (IR::Block* block : program.blocks) {
+                for (IR::Inst& inst : block->Instructions()) {
+                    if (inst.GetOpcode() != IR::Opcode::ReadLane || !inst.Arg(1).IsImmediate()) {
+                        continue;
+                    }
+                    const u32 lane = inst.Arg(1).U32();
+                    if (lane < num_threads) {
+                        continue;
+                    }
+                    ++folded;
+                    if (const auto identity = ReductionIdentity(inst.Arg(0))) {
+                        inst.ReplaceUsesWithAndRemove(IR::Value{*identity});
+                    } else {
+                        inst.SetArg(1, IR::Value{lane % num_threads});
+                    }
+                }
+            }
+            if (folded) {
+                static std::atomic<u32> shaders{0};
+                std::printf("Wave64: absent-lane reads folded in cs %#llx (%u threads, %u reads, "
+                            "%u shaders so far)\n",
+                            static_cast<unsigned long long>(program.info.pgm_hash), num_threads,
+                            folded, shaders.fetch_add(1, std::memory_order_relaxed) + 1);
+            }
+            return;
+        }
+        if (!bp06) {
+            return;
+        }
+    }
     if (num_threads <= 32) {
         if (!bp06) {
             return;
