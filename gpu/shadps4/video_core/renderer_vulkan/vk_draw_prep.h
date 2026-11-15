@@ -183,6 +183,9 @@ private:
     bool baseline_ready{}; ///< guarded by `mutex`
     std::mutex mutex;
     std::condition_variable_any cv;
+    /// gow3: the draw-preparation workers wait here (WakeWorkers), the scanner on cv.
+    std::condition_variable_any work_cv;
+    void WakeWorkers();
     std::deque<std::shared_ptr<Submission>> submissions; ///< ordered by seq
     std::atomic<u64> gpu_seq{0};
     std::shared_ptr<Submission> current;
