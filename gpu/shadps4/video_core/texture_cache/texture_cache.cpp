@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <limits>
+#include <cstring>
+#include <cmath>
 #include <filesystem>
 #include <xxhash.h>
 #include "video_core/amdgpu/liverpool.h"
@@ -437,6 +441,78 @@ void TextureCache::DiagDumpImage(ImageId image_id, const char* tag) {
     runtime.DownloadImage(&image, download.buffer, std::span{&copy, 1});
     scheduler.Finish();
     download.Invalidate();
+    // gow3: GOW3_DIAG_IMAGES=2 writes no files, only a line per image with the pixels that are
+    // NaN, infinite, negative or magenta (red and blue far above green), to find the pass that
+    // first draws the purple lines.
+    static const bool stats_only = [] {
+        const char* env = std::getenv("GOW3_DIAG_IMAGES");
+        return env && *env == '2';
+    }();
+    {
+        const auto half = [](u16 h) -> float {
+            const u32 sign = (h >> 15) & 1, exp = (h >> 10) & 0x1f, man = h & 0x3ff;
+            float v;
+            if (exp == 0) {
+                v = std::ldexp(static_cast<float>(man), -24);
+            } else if (exp == 31) {
+                v = man ? std::numeric_limits<float>::quiet_NaN()
+                        : std::numeric_limits<float>::infinity();
+            } else {
+                v = std::ldexp(static_cast<float>(man | 0x400), static_cast<int>(exp) - 25);
+            }
+            return sign ? -v : v;
+        };
+        const auto* bytes = static_cast<const u8*>(static_cast<const void*>(download.mapped));
+        const u32 w = image.info.size.width, h = image.info.size.height;
+        u64 nan = 0, inf = 0, neg = 0, magenta = 0, total = 0;
+        float max_v = 0.f;
+        u32 first_x = 0, first_y = 0;
+        bool known = true;
+        for (u32 y = 0; y < h && known; ++y) {
+            for (u32 x = 0; x < w; ++x) {
+                const u8* px = bytes + (static_cast<u64>(y) * image.info.pitch + x) * bytes_per_pixel;
+                float r, g, b;
+                if (bytes_per_pixel == 8) { // 16-bit float RGBA
+                    u16 c[4];
+                    std::memcpy(c, px, sizeof(c));
+                    r = half(c[0]), g = half(c[1]), b = half(c[2]);
+                } else if (bytes_per_pixel == 4) { // 8-bit RGBA (or packed: rough)
+                    r = px[0] / 255.f, g = px[1] / 255.f, b = px[2] / 255.f;
+                } else {
+                    known = false;
+                    break;
+                }
+                ++total;
+                const bool is_nan = std::isnan(r) || std::isnan(g) || std::isnan(b);
+                const bool is_inf = std::isinf(r) || std::isinf(g) || std::isinf(b);
+                nan += is_nan;
+                inf += is_inf;
+                neg += (r < 0.f || g < 0.f || b < 0.f);
+                if (!is_nan && !is_inf) {
+                    max_v = std::max({max_v, r, g, b});
+                    if (r > 0.05f && b > 0.05f && r > 3.f * std::max(g, 0.f) &&
+                        b > 3.f * std::max(g, 0.f)) {
+                        if (magenta++ == 0) {
+                            first_x = x, first_y = y;
+                        }
+                    }
+                }
+            }
+        }
+        if (known) {
+            std::printf("DiagStats %s %llx %ux%u fmt %d: nan %llu inf %llu negative %llu magenta %llu "
+                        "(first %u,%u) of %llu, max %.3g\n",
+                        tag, static_cast<unsigned long long>(image.info.guest_address), w, h,
+                        static_cast<int>(image.info.pixel_format),
+                        static_cast<unsigned long long>(nan), static_cast<unsigned long long>(inf),
+                        static_cast<unsigned long long>(neg),
+                        static_cast<unsigned long long>(magenta), first_x, first_y,
+                        static_cast<unsigned long long>(total), max_v);
+        }
+    }
+    if (stats_only) {
+        return;
+    }
     static int sequence = 0;
     const char* dir = std::getenv("GOW3_DIAG_DIR");
     const char* dir_path = dir && *dir ? dir : "out/diag";
