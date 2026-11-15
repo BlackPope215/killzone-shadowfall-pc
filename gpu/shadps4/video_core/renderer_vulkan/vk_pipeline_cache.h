@@ -12,6 +12,7 @@
 #include <variant>
 #include <boost/container/static_vector.hpp>
 #include <tsl/robin_map.h>
+#include "common/srw_shared_mutex.h"
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/recompiler.h"
 #include "shader_recompiler/specialization.h"
@@ -329,7 +330,10 @@ private:
     std::unordered_map<u64, size_t> next_permutation;
     std::vector<Program*> pending_programs;
     /// gow3: exclusive for program/permutation insertions, shared for worker lookups.
-    std::shared_mutex programs_mutex;
+    /// gow3 (from the Uncharted port): a slim reader/writer lock; libc++'s std::shared_mutex takes
+    /// an inner mutex on every shared lock, so the GPU thread and the draw-preparation workers
+    /// queued behind each other on each program lookup. GOW3_SRW_LOCKS=0: std::shared_mutex.
+    Common::SrwSharedMutex programs_mutex;
     u64 prepared_hits = 0, prepared_misses = 0;
     const PreparedDraw* used_prepared = nullptr;
     bool lookup_pending = false; ///< gow3: see LookupPending
