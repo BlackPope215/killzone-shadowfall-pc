@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstdlib>
 #include <span>
 #include <unordered_map>
 
@@ -281,8 +282,39 @@ public:
     }
 
     /// Returns true if the subgroup size can be set to match guest subgroup size
+    /// gow3 (after SotC 71ae8c2): 64-wide subgroups are pinned only when the driver lets a size be
+    /// required in the vertex, fragment and compute stages alike. A driver that allows it only
+    /// for compute made the old code require 64 in graphics stages (invalid) while the compute
+    /// shaders skipped the wave64 lowering: random colours on fog, particles and characters.
+    /// GOW3_SUBGROUP_STAGES=0 restores the old check.
+    static bool SubgroupStageCheck() {
+        static const bool on = [] {
+            const char* v = std::getenv("GOW3_SUBGROUP_STAGES");
+            return !(v && v[0] == '0');
+        }();
+        return on;
+    }
     bool IsSubgroupSize64Supported() const {
-        return vk13_features.subgroupSizeControl && vk13_props.maxSubgroupSize >= 64;
+        constexpr auto stages = vk::ShaderStageFlagBits::eVertex |
+                                vk::ShaderStageFlagBits::eFragment |
+                                vk::ShaderStageFlagBits::eCompute;
+        return vk13_features.subgroupSizeControl && vk13_props.maxSubgroupSize >= 64 &&
+               (!SubgroupStageCheck() ||
+                (vk13_props.requiredSubgroupSizeStages & stages) == stages);
+    }
+
+    /// gow3: compute pinned to 32 lanes and lowered for 32 (the NVIDIA path) when 64 cannot be
+    /// pinned everywhere but the device could still run compute wider than 32.
+    bool IsComputeSubgroupSize32Required() const {
+        return SubgroupStageCheck() && !IsSubgroupSize64Supported() &&
+               vk13_features.subgroupSizeControl && vk13_props.minSubgroupSize <= 32 &&
+               vk13_props.maxSubgroupSize > 32 &&
+               bool(vk13_props.requiredSubgroupSizeStages & vk::ShaderStageFlagBits::eCompute);
+    }
+
+    /// gow3: whether a required subgroup size may be given for this stage.
+    bool CanRequireSubgroupSize(vk::ShaderStageFlagBits stage) const {
+        return !SubgroupStageCheck() || bool(vk13_props.requiredSubgroupSizeStages & stage);
     }
 
     /// gow3: VK_KHR_pipeline_executable_properties is on (GOW3_WAVE_STATS=1, vk_wave_stats.h).
@@ -420,6 +452,14 @@ public:
 
     /// Returns the subgroup size of the selected physical device.
     u32 SubgroupSize() const {
+        if (SubgroupStageCheck()) {
+            if (IsSubgroupSize64Supported()) {
+                return 64;
+            }
+            if (IsComputeSubgroupSize32Required()) {
+                return 32;
+            }
+        }
         return vk11_props.subgroupSize;
     }
 

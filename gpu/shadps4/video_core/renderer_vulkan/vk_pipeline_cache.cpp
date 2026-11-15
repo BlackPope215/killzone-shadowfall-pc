@@ -756,7 +756,10 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         }(),
         .needs_lds_barriers = AmdPathsOff::LdsBarriersAll() ||
                               instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
-                              instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
+                              instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp ||
+                              // gow3 (SotC 71ae8c2): lowered for fewer than 64 lanes, the LDS
+                              // exchanges need barriers (the GPU hung without them).
+                              instance.SubgroupSize() < 64,
         .needs_buffer_offsets = instance.StorageMinAlignment() > 4,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
@@ -1052,6 +1055,19 @@ void PipelineCache::PublishGraphics(bool wait) {
             continue;
         }
         const auto key = it.key();
+        // gow3 (after SotC bde051e): a pipeline the driver refused has no handle and is never
+        // saved. With no working fast link it takes the slot (its draws are skipped, nothing
+        // builds it again); with one, the fast link stays in use and is not optimized again.
+        if (build->pipeline && !build->pipeline->Handle()) {
+            auto [slot, inserted] = graphics_pipelines.try_emplace(key);
+            if (inserted || !slot->second || !slot->second->Handle()) {
+                slot.value() = std::move(build->pipeline);
+            } else {
+                fast_link->refused.insert(key);
+            }
+            it = pending_graphics.erase(it);
+            continue;
+        }
         build->pipeline->PublishStages(build->live_infos);
         RegisterPipelineData(key, std::hash<GraphicsPipelineKey>{}(key), build->data);
         // gow3: GOW3_GPL: the optimized pipeline replaces a fast-linked one, which is kept
@@ -1497,12 +1513,13 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
         }
     }
     const auto it = graphics_pipelines.find(prepared.key);
-    if (it == graphics_pipelines.end() || !it->second) {
+    if (it == graphics_pipelines.end() || !it->second || !it->second->Handle()) {
         return miss(PrepMiss::Pipeline);
     }
     // gow3: GOW3_GPL: a fast-linked pipeline whose optimized compile is not queued yet (the
     // queue was full) takes the regular path, which queues it.
-    if (it->second->IsFastLinked() && !pending_graphics.contains(prepared.key)) {
+    if (it->second->IsFastLinked() && !pending_graphics.contains(prepared.key) &&
+        !fast_link->refused.contains(prepared.key)) {
         return miss(PrepMiss::Pipeline);
     }
     const GraphicsPipeline* pipeline = it->second.get();
@@ -1560,9 +1577,11 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         // queues that compile when the queue was full at link time.
         const bool optimize = found != graphics_pipelines.end() && found->second &&
                               found->second->IsFastLinked() &&
-                              !pending_graphics.contains(sel.graphics_key);
+                              !pending_graphics.contains(sel.graphics_key) &&
+                              !fast_link->refused.contains(sel.graphics_key);
         if (found != graphics_pipelines.end() && !optimize) {
-            return found->second.get();
+            // A refused pipeline (no handle): its draws are skipped.
+            return found->second && found->second->Handle() ? found->second.get() : nullptr;
         }
         const GraphicsPipeline* linked = optimize ? found->second.get() : TryFastLink();
         // gow3: GOW3_GPL: a new pipeline goes to the fast-link threads; its optimized compile
@@ -1611,8 +1630,10 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
             sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
 
-        RegisterPipelineData(sel.graphics_key, pipeline_hash, sdata);
-        ++num_new_pipelines;
+        if (it.value()->Handle()) { // a refused one is not saved
+            RegisterPipelineData(sel.graphics_key, pipeline_hash, sdata);
+            ++num_new_pipelines;
+        }
 
         if (EmulatorSettings.IsShaderCollect()) {
             for (auto stage = 0; stage < MaxShaderStages; ++stage) {
@@ -1624,7 +1645,8 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         }
         sel.fetch_shader.reset();
     }
-    return it->second.get();
+    // gow3: a pipeline the driver refused has no handle: the draws that need it are skipped.
+    return it->second && it->second->Handle() ? it->second.get() : nullptr;
 }
 
 const ComputePipeline* PipelineCache::GetComputePipeline() {

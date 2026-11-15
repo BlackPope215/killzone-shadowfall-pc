@@ -631,6 +631,13 @@ bool Instance::CreateDevice() {
     const auto vk11_features = feature_chain.get<vk::PhysicalDeviceVulkan11Features>();
     vk12_features = feature_chain.get<vk::PhysicalDeviceVulkan12Features>();
     vk13_features = feature_chain.get<vk::PhysicalDeviceVulkan13Features>();
+    std::printf("Subgroups: size %u min %u max %u required stages %#x control %d -> %s\n",
+                vk11_props.subgroupSize, vk13_props.minSubgroupSize, vk13_props.maxSubgroupSize,
+                static_cast<unsigned>(vk13_props.requiredSubgroupSizeStages),
+                int(vk13_features.subgroupSizeControl),
+                IsSubgroupSize64Supported()          ? "64 in every stage"
+                : IsComputeSubgroupSize32Required() ? "compute pinned to 32, lowered for 32"
+                                                     : "driver default");
     // gow3: DLSS (optional bridge DLL) needs its own device extensions on NVIDIA GPUs.
     std::vector<const char*> dlss_extensions;
     if (Dlss* dlss = Dlss::Get()) {

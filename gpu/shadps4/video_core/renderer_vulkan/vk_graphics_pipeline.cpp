@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdio>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -267,7 +268,10 @@ GraphicsPipeline::GraphicsPipeline(
         .requiredSubgroupSize = 64,
     };
     for (auto& stage : shader_stages) {
-        stage.pNext = instance.IsSubgroupSize64Supported() ? &subgroup_size_ci : nullptr;
+        stage.pNext = instance.IsSubgroupSize64Supported() &&
+                              instance.CanRequireSubgroupSize(stage.stage)
+                          ? &subgroup_size_ci
+                          : nullptr;
     }
 
     const auto depth_format =
@@ -454,8 +458,14 @@ GraphicsPipeline::GraphicsPipeline(
     }
     // A fast-link job may restore the optimized pipeline from its binary instead.
     fast_linked = linker && linker->outcome == PipelineLinker::Outcome::Linked;
-    ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create graphics pipeline: {}",
-               vk::to_string(pipeline_result));
+    if (pipeline_result != vk::Result::eSuccess || !pipe) {
+        // gow3 (after SotC bde051e): a pipeline the driver refuses (ErrorUnknown on Radeons)
+        // ended the game here. Left without a handle, its draws are skipped and it is not saved
+        // in the pipeline cache: a missing effect instead of a crash.
+        std::fprintf(stderr, "GOW3 PIPELINE FAILED graphics %s: %s (its draws are skipped)\n",
+                     debug_str.c_str(), vk::to_string(pipeline_result).c_str());
+        return;
+    }
     pipeline = std::move(pipe);
     SetObjectName(device, *pipeline, "Graphics Pipeline {}", debug_str);
     RecordWaveSizes();
