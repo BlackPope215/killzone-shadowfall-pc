@@ -51,8 +51,21 @@ static int32_t error(int e) {
     return (int32_t)(UINT32_C(0x80020000)|code);
 }
 /* All helpers ending in _locked require registry_lock. */
+/* gow3 (after SpartanPort 201a00f0 / Jgamrot): a found entry moves to the front of its list,
+ * so the locks and threads the game uses all the time stop sitting behind every one created
+ * since boot. What is found does not change. GOW3_REGISTRY_FRONT=0 keeps the old order. */
+static int registry_front(void) {
+    static int on=-1;
+    if (on<0) { const char *v=getenv("GOW3_REGISTRY_FRONT"); on=!(v && v[0]=='0'); }
+    return on;
+}
 static Rwlock *find_locked(Rwlock *handle) {
-    for (Rwlock *r=registry; r; r=r->next) if (r==handle) return r;
+    for (Rwlock **link=&registry; *link; link=&(*link)->next) {
+        Rwlock *r=*link;
+        if (r!=handle) continue;
+        if (link!=&registry && registry_front()) { *link=r->next; r->next=registry; registry=r; }
+        return r;
+    }
     return NULL;
 }
 static int create_locked(Rwlock **out) {
