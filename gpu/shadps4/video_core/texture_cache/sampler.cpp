@@ -70,7 +70,9 @@ Sampler::Sampler(const Vulkan::Instance& instance, const AmdGpu::Sampler& sample
         .compareEnable = is_depth,
         .compareOp = LiverpoolToVK::DepthCompare(sampler.depth_compare_func),
         .minLod = sampler.MinLod(),
-        .maxLod = sampler.MaxLod(),
+        // gow3 (from SpartanPort 7e85ec56): a stale guest sampler can put maxLod below minLod,
+        // which Vulkan forbids (VUID-VkSamplerCreateInfo-maxLod-01973).
+        .maxLod = std::max(sampler.MinLod(), sampler.MaxLod()),
         .borderColor = border_color,
         .unnormalizedCoordinates = false, // Handled in shader due to Vulkan limitations.
     };
