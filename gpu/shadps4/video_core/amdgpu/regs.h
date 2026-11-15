@@ -203,9 +203,8 @@ union Regs {
 struct RegDirty {
     static constexpr u32 BlockWords = 32;
     static constexpr u32 NumBlocks = Regs::NumRegs / BlockWords;
-    std::bitset<NumBlocks> blocks;
-    /// gow3: the same bits as 64-bit words, for a fast scan (ForEach): libc++ has no
-    /// _Find_first/_Find_next, so the scan tested all 1664 bits for every draw.
+    /// gow3: dirty blocks as 64-bit words, scanned with countr_zero (ForEach): only marked
+    /// blocks are visited, in order (after SpartanPort 1d1094b3).
     static constexpr u32 NumWords = (NumBlocks + 63) / 64;
     std::array<u64, NumWords> words{};
     bool reset = false; ///< ClearState: defaults, then only the blocks marked after it
@@ -225,7 +224,6 @@ struct RegDirty {
         }
         const u32 last = std::min(word + count, Regs::NumRegs) - 1;
         for (u32 block = word / BlockWords; block <= last / BlockWords; ++block) {
-            blocks.set(block);
             words[block / 64] |= u64(1) << (block % 64);
         }
     }
@@ -236,7 +234,6 @@ struct RegDirty {
         Mark(u32(offset / sizeof(u32)), u32((sizeof(T) + sizeof(u32) - 1) / sizeof(u32)));
     }
     void Clear() {
-        blocks.reset();
         words.fill(0);
         reset = false;
     }

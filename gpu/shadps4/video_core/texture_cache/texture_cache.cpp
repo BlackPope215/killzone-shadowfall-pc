@@ -823,17 +823,13 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, new_info);
         RegisterImage(new_image_id);
 
-        // insert() may have grown slot_images and moved every image: `cache_image` would then
-        // point at freed storage, so look it up again.
-        auto& old_image = slot_images[cache_image_id];
-
         // Inherit image usage
         auto& new_image = slot_images[new_image_id];
-        new_image.usage = old_image.usage;
+        new_image.usage = cache_image.usage;
         new_image.flags &= ~ImageFlagBits::Dirty;
         // When creating a depth buffer through overlap resolution don't clear it on first use.
         new_image.info.meta_info.htile_clear_mask = 0;
-        runtime.CopyColorAndDepth(&old_image, &new_image);
+        runtime.CopyColorAndDepth(&cache_image, &new_image);
 
         // Free the cache image.
         FreeImage(cache_image_id);
@@ -1298,9 +1294,8 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             view_slice = -1;
 
             // gow3 (from the Uncharted port): a copy, not a reference into slot_images:
-            // ResolveOverlap can insert an image (ExpandImage, ResolveDepthOverlap), which moves
-            // every image when the slot vector grows, and the reference would then read freed
-            // memory.
+            // ResolveOverlap can free this image (ExpandImage, ResolveDepthOverlap), and the
+            // reference would then read a destroyed object.
             const ImageInfo merged_info = image_id ? slot_images[image_id].info : info;
             auto [overlap_image_id, overlap_view_mip, overlap_view_slice] =
                 ResolveOverlap(merged_info, desc.type, cache_id, image_id, desc.needs_native);
@@ -1512,12 +1507,10 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
         }
         Image& stencil_image = slot_images[stencil_id];
         TouchImage(stencil_image);
-        // insert() above may have grown slot_images and moved every image, leaving `image`
-        // pointing at freed storage: look the depth image up again.
-        stencil_image.AssociateDepth(image_id, slot_images[image_id].image_uid);
+        stencil_image.AssociateDepth(image_id, image.image_uid);
     }
 
-    return slot_images[image_id].FindView(desc.view_info, false);
+    return image.FindView(desc.view_info, false);
 }
 
 void TextureCache::RefreshImage(Image& image) {

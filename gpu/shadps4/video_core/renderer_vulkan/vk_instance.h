@@ -281,12 +281,7 @@ public:
         return vk12_features.shaderSharedInt64Atomics;
     }
 
-    /// Returns true if the subgroup size can be set to match guest subgroup size
-    /// gow3 (after SotC 71ae8c2): 64-wide subgroups are pinned only when the driver lets a size be
-    /// required in the vertex, fragment and compute stages alike. A driver that allows it only
-    /// for compute made the old code require 64 in graphics stages (invalid) while the compute
-    /// shaders skipped the wave64 lowering: random colours on fog, particles and characters.
-    /// GOW3_SUBGROUP_STAGES=0 restores the old check.
+    /// gow3: GOW3_SUBGROUP_STAGES=0 restores the old subgroup-size checks (no stage check).
     static bool SubgroupStageCheck() {
         static const bool on = [] {
             const char* v = std::getenv("GOW3_SUBGROUP_STAGES");
@@ -294,6 +289,12 @@ public:
         }();
         return on;
     }
+
+    /// Returns true if the subgroup size can be set to match the guest's (64) in every stage.
+    /// gow3 (after SotC 71ae8c2): only when the driver lets a size be required in the vertex,
+    /// fragment and compute stages alike. A driver that allows it only for compute made the old
+    /// code require 64 in graphics stages (invalid) while the compute shaders skipped the wave64
+    /// lowering: random colours on fog, particles and characters.
     bool IsSubgroupSize64Supported() const {
         constexpr auto stages = vk::ShaderStageFlagBits::eVertex |
                                 vk::ShaderStageFlagBits::eFragment |
@@ -450,15 +451,13 @@ public:
         return properties.limits.nonCoherentAtomSize;
     }
 
-    /// Returns the subgroup size of the selected physical device.
+    /// Returns the subgroup size the recompiler targets.
     u32 SubgroupSize() const {
-        if (SubgroupStageCheck()) {
-            if (IsSubgroupSize64Supported()) {
-                return 64;
-            }
-            if (IsComputeSubgroupSize32Required()) {
-                return 32;
-            }
+        if (IsSubgroupSize64Supported()) {
+            return 64;
+        }
+        if (IsComputeSubgroupSize32Required()) {
+            return 32; // gow3: compute pinned to 32 lanes, so lowered for 32
         }
         return vk11_props.subgroupSize;
     }
