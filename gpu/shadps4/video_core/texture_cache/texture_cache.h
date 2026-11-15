@@ -447,6 +447,10 @@ private:
     void UntrackImageHead(ImageId image_id);
     void UntrackImageTail(ImageId image_id);
 
+    /// gow3 (from SpartanPort): the same mapped guest range when marking and when checking a
+    /// small image; nullopt when it must not be hashed.
+    static std::optional<u64> MaybeDirtyHash(const Image& image);
+
     void MarkAsMaybeDirty(ImageId image_id, Image& image);
 
     /// Removes the image and any views/surface metas that reference it.
