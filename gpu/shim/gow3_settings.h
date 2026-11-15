@@ -35,7 +35,9 @@ struct Values {
     std::atomic<bool> sharpen{true};
     std::atomic<float> sharpness{0.3f};
     std::atomic<bool> jitter{true};
-    std::atomic<bool> reactive{false};
+    // gow3 (from SpartanPort 9fdc30c0): on by default; without the mask FSR's history leaves
+    // trails on particles (ash, sparks, smoke) and water.
+    std::atomic<bool> reactive{true};
     std::atomic<bool> object_motion{true};
     std::atomic<float> reactive_scale{1.0f};
     std::atomic<float> reactive_threshold{0.2f};
