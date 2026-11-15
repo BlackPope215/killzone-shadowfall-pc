@@ -38,7 +38,7 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 14u; // gow3: ps4_core backports BP03/04/05/06 (2026-10-25)
+static constexpr u32 ShaderBinaryVersion = 15u; // gow3: object motion stores (2026-11-15)
 static constexpr u32 ShaderMetaVersion = 7u; // gow3: ImageResource::needs_native
 static constexpr u32 PipelineKeyVersion = 5u; // gow3: Info layout (ImageResource::needs_native)
 } // namespace Serialization
