@@ -136,10 +136,23 @@ void runtime_thread_attach_main(void) {
     GuestThread *t=runtime_thread_current();
     snprintf(t->name,sizeof(t->name),"main");
 }
+/* gow3 (after SpartanPort 201a00f0 / Jgamrot): a found entry moves to the front of its list,
+ * so the locks and threads the game uses all the time stop sitting behind every one created
+ * since boot. What is found does not change. GOW3_REGISTRY_FRONT=0 keeps the old order. */
+static int registry_front(void) {
+    static int on=-1;
+    if (on<0) { const char *v=getenv("GOW3_REGISTRY_FRONT"); on=!(v && v[0]=='0'); }
+    return on;
+}
 static GuestThread *find_thread(void *handle) {
     GuestThread *found=NULL;
     pthread_mutex_lock(&lock);
-    for (GuestThread *t=threads;t;t=t->next) if (t==handle) { found=t; break; }
+    for (GuestThread **link=&threads;*link;link=&(*link)->next) {
+        if (*link!=handle) continue;
+        found=*link;
+        if (link!=&threads && registry_front()) { *link=found->next; found->next=threads; threads=found; }
+        break;
+    }
     pthread_mutex_unlock(&lock);
     return found;
 }
