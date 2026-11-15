@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -245,8 +246,14 @@ bool TemporalUpscaler::Active() const {
 
 bool TemporalUpscaler::ReactiveOn() const {
     // FSR 4 takes no reactive mask: the opaque snapshot and the mask pass would be wasted.
-    return Gow3Settings::Get().reactive && !Gow3Toggle::Disabled(1u << 27) && !UseFsr4() && !UseDlss() &&
-           Gow3Settings::Get().upscaler != Gow3Settings::UpscalerTaa;
+    const bool on = Gow3Settings::Get().reactive && !Gow3Toggle::Disabled(1u << 27) && !UseFsr4() &&
+                    !UseDlss() && Gow3Settings::Get().upscaler != Gow3Settings::UpscalerTaa;
+    // gow3: logged on each change, so a run's log says whether particles had the mask.
+    static std::atomic<int> logged{-1};
+    if (logged.exchange(on ? 1 : 0, std::memory_order_relaxed) != (on ? 1 : 0)) {
+        std::printf("Upscaler: reactive mask %s\n", on ? "on" : "off");
+    }
+    return on;
 }
 
 void TemporalUpscaler::OnSceneColor(VideoCore::ImageId color) {
