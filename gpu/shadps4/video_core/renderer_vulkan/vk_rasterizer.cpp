@@ -1921,6 +1921,30 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     if (FrameCapture::Active()) {
         const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
         FrameCapture::Draw(vs_info.pgm_hash, ps ? ps->pgm_hash : 0, num_indices, num_instances);
+        // gow3 diagnostics: GOW3_DIAG_IMAGES=3 checks one color target (GOW3_DIAG_ADDR, default
+        // 0x220490000, Killzone's G-buffer light target) after every draw of a captured frame
+        // and logs the draw whose shaders changed its count of bad pixels.
+        static const int diag_mode = [] {
+            const char* env = std::getenv("GOW3_DIAG_IMAGES");
+            return env && *env ? *env - '0' : 0;
+        }();
+        static const VAddr diag_addr = [] {
+            const char* env = std::getenv("GOW3_DIAG_ADDR");
+            return env && *env ? static_cast<VAddr>(std::strtoull(env, nullptr, 16))
+                               : VAddr{0x220490000};
+        }();
+        if (diag_mode == 3 && FrameCapture::IsRecording()) {
+            for (const auto image_id : diag_targets) {
+                if (texture_cache.GetImage(image_id).info.guest_address != diag_addr) {
+                    continue;
+                }
+                char tag[64];
+                std::snprintf(tag, sizeof(tag), "d%05u_vs%08x_ps%08x", diag_draw++,
+                              static_cast<u32>(vs_info.pgm_hash),
+                              static_cast<u32>(ps ? ps->pgm_hash : 0));
+                texture_cache.DiagDumpImage(image_id, tag);
+            }
+        }
         if (const auto& bc = regs.blend_control[0]; bc.enable && regs.color_buffers[0]) {
             char note[128];
             std::snprintf(note, sizeof(note), "\n  blend ps %08x idx %u: src %u dst %u func %u z %u%u",

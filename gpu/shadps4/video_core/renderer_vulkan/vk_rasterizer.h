@@ -428,6 +428,7 @@ private:
     std::array<VAddr, 8> diag_addresses{};
     boost::container::static_vector<VideoCore::ImageId, 8> diag_targets;
     u32 diag_pass{};
+    u32 diag_draw{}; ///< GOW3_DIAG_IMAGES=3: draws checked in the captured frame
     struct BoundBuffer {
         const VideoCore::Buffer* buffer;
         u64 offset;
