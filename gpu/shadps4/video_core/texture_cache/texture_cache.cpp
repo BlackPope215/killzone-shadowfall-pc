@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <unordered_map>
 #include <algorithm>
 #include <limits>
 #include <cstring>
@@ -446,7 +447,7 @@ void TextureCache::DiagDumpImage(ImageId image_id, const char* tag) {
     // first draws the purple lines.
     static const bool stats_only = [] {
         const char* env = std::getenv("GOW3_DIAG_IMAGES");
-        return env && *env == '2';
+        return env && (*env == '2' || *env == '3');
     }();
     {
         const auto half = [](u16 h) -> float {
@@ -499,7 +500,20 @@ void TextureCache::DiagDumpImage(ImageId image_id, const char* tag) {
                 }
             }
         }
-        if (known) {
+        // GOW3_DIAG_IMAGES=3 (a check after every draw): only the draws that change the counts.
+        static const bool per_draw = [] {
+            const char* env = std::getenv("GOW3_DIAG_IMAGES");
+            return env && *env == '3';
+        }();
+        static std::unordered_map<VAddr, std::array<u64, 4>> last_counts;
+        bool changed = true;
+        if (known && per_draw) {
+            const std::array<u64, 4> now{nan, inf, neg, magenta};
+            auto [it, inserted] = last_counts.try_emplace(image.info.guest_address, now);
+            changed = inserted || it->second != now;
+            it->second = now;
+        }
+        if (known && changed) {
             std::printf("DiagStats %s %llx %ux%u fmt %d: nan %llu inf %llu negative %llu magenta %llu "
                         "(first %u,%u) of %llu, max %.3g\n",
                         tag, static_cast<unsigned long long>(image.info.guest_address), w, h,
