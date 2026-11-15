@@ -652,6 +652,31 @@ void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_
     request_cv.notify_one();
 }
 
+namespace {
+// gow3 (from SpartanPort 790dc95c; TatsunaKyo/bloodborne_pc 8c03b3819d, 6eabc89d81): the next
+// slot of the frame limiter. The old rule, max(previous + period, now - period), put the slot
+// in the past after a late frame, so the next queued frame was shown at once: two frames back
+// to back after every hitch. A frame later than the wake tolerance now starts a fresh interval;
+// ordinary timer jitter keeps the phase, so the limit does not drift below its rate.
+// GOW3_FLIP_REBASE=0: the old rule.
+std::chrono::steady_clock::time_point NextFlipDeadline(
+    std::chrono::steady_clock::time_point previous, std::chrono::steady_clock::time_point submitted,
+    std::chrono::nanoseconds period) {
+    static const bool rebase = [] {
+        const char* env = std::getenv("GOW3_FLIP_REBASE");
+        return !env || env[0] != '0';
+    }();
+    if (!rebase) {
+        return std::max(previous + period, submitted - period);
+    }
+    if (period.count() <= 0) {
+        return submitted;
+    }
+    const auto tolerance = std::min(period / 8, std::chrono::nanoseconds{1'000'000});
+    return (submitted - previous > tolerance ? submitted : previous) + period;
+}
+} // namespace
+
 void VideoOutDriver::PresentThread(std::stop_token token) {
     const std::chrono::nanoseconds vblank_period(1000000000 /
                                                  EmulatorSettings.GetVblankFrequency());
@@ -785,7 +810,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         if (flip_slot && vblank_status.count % (main_port.flip_rate + 1) == 0) {
             const auto request = receive_request();
             if (request && frame_limit) {
-                next_flip = std::max(next_flip + frame_period, now - frame_period);
+                next_flip = NextFlipDeadline(next_flip, now, frame_period);
             }
             if (!request) {
                 if (timer.GetTotalWait().count() < 0) { // Dont draw too fast
@@ -843,10 +868,11 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                 }
                 Common::PreciseSleepUntil(next_flip); // gow3: even frame-limited flips (#66)
             }
-            const auto now = std::chrono::steady_clock::now();
             const auto request = receive_request();
             if (request) {
-                next_flip = std::max(next_flip + frame_period, now - frame_period);
+                // Timestamp after the dequeue, so a lock delay cannot shorten the next interval.
+                next_flip =
+                    NextFlipDeadline(next_flip, std::chrono::steady_clock::now(), frame_period);
                 Flip(request);
                 FRAME_END;
             }
