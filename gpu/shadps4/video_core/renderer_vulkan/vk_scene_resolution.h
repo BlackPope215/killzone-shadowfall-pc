@@ -39,7 +39,9 @@ public:
         vk::ImageLayout layout;
         vk::ImageUsageFlags usage;
     };
-    Target Attachment(VideoCore::ImageId, const VideoCore::ImageViewInfo&);
+    /// writes: false for a depth attachment the pass only tests (soft particles that also
+    /// sample it), so the native image stays current.
+    Target Attachment(VideoCore::ImageId, const VideoCore::ImageViewInfo&, bool writes = true);
     Target Read(VideoCore::ImageId, const VideoCore::ImageViewInfo&,
                 vk::PipelineStageFlags2 = vk::PipelineStageFlagBits2::eComputeShader,
                 vk::AccessFlags2 = vk::AccessFlagBits2::eShaderRead);
