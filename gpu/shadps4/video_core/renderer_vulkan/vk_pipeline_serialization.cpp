@@ -38,7 +38,7 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 17u; // gow3: subgroup size only where the driver allows it (2026-11-15)
+static constexpr u32 ShaderBinaryVersion = 17u; // gow3: subgroup stages, absent lanes, unordered compares, s_wqm (2026-11-15)
 static constexpr u32 ShaderMetaVersion = 7u; // gow3: ImageResource::needs_native
 static constexpr u32 PipelineKeyVersion = 5u; // gow3: Info layout (ImageResource::needs_native)
 } // namespace Serialization

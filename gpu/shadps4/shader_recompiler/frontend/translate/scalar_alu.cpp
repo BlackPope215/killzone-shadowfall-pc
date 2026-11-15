@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include <magic_enum/magic_enum.hpp>
 #include "common/assert.h"
 #include "shader_recompiler/frontend/translate/translate.h"
@@ -100,8 +101,32 @@ void Translator::EmitScalarAlu(const GcnInst& inst) {
             return S_MOV_B64(inst);
         case Opcode::S_NOT_B64:
             return S_NOT_B64(inst);
-        case Opcode::S_WQM_B64:
-            break;
+        case Opcode::S_WQM_B64: {
+            // gow3 (after SotC 3b5ff8f, on by default there): s_wqm_b64 exec, exec needs nothing
+            // (pixel lanes already run as whole quads). Other forms write the source mask grown
+            // to whole quads (a quad with any bit set gets all four); the no-op left the
+            // destination unset, so a later branch on it read garbage, and alpha-tested masks
+            // lost the quad neighbours used for texture LOD. GOW3_WQM=0 restores the no-op.
+            static const bool wqm = [] {
+                const char* v = std::getenv("GOW3_WQM");
+                return !(v && v[0] == '0');
+            }();
+            if (!wqm || (inst.dst[0].field == OperandField::ExecLo &&
+                         inst.src[0].field == OperandField::ExecLo)) {
+                break;
+            }
+            // Masks are per-lane booleans for the recompiler, so the growth is per lane: a lane
+            // is set when any lane of its quad has its bit.
+            const IR::U1 bit{ir.InverseBallot(GetSrc64(inst.src[0]))};
+            const IR::U32 v{ir.Select(bit, ir.Imm32(1u), ir.Imm32(0u))};
+            const IR::U32 quad{ir.BitwiseOr(
+                ir.BitwiseOr(ir.QuadBroadcast(v, ir.Imm32(0u)), ir.QuadBroadcast(v, ir.Imm32(1u))),
+                ir.BitwiseOr(ir.QuadBroadcast(v, ir.Imm32(2u)), ir.QuadBroadcast(v, ir.Imm32(3u))))};
+            const IR::U64 mask{ir.Ballot(ir.INotEqual(quad, ir.Imm32(0u)))};
+            SetDst64(inst.dst[0], mask);
+            ir.SetScc(ir.InverseBallot(mask));
+            return;
+        }
         case Opcode::S_BREV_B32:
             return S_BREV_B32(inst);
         case Opcode::S_BCNT1_I32_B32:
