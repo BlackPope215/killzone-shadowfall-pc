@@ -77,10 +77,24 @@ static void EmitVertexMotion(EmitContext& ctx) {
                                            ctx.push_data_block,
                                            ctx.ConstU32(PushData::MotionParamIndex));
     const Id param_index = ctx.OpLoad(u32_type, param_ptr);
-    const auto address = [&](u64 base, Id index, u32 stride) {
-        return ctx.OpIAdd(ctx.U64, ctx.Constant(ctx.U64, base),
-                          ctx.OpIMul(ctx.U64, ctx.OpUConvert(ctx.U64, index),
-                                     ctx.Constant(ctx.U64, u64(stride))));
+    // gow3 (from bc160201983's Uncharted port, #272 #273): base + index * stride + extra, the
+    // offset in 32 bits added to the low half with its carry into the high half. AMD's compiler
+    // dropped the high half of the same sum done in 64-bit integers, so a buffer above 4 GiB was
+    // read 4 GiB lower. The base stays one 64-bit constant, split inside the shader: the pipeline
+    // cache finds this session's addresses as 64-bit constants (MotionPlaceholder in
+    // vk_pipeline_serialization.cpp).
+    const auto address = [&](u64 base, Id index, u32 stride, u32 extra = 0) {
+        Id offset = ctx.OpIMul(u32_type, index, ctx.ConstU32(stride));
+        if (extra) {
+            offset = ctx.OpIAdd(u32_type, offset, ctx.ConstU32(extra));
+        }
+        const Id halves = ctx.OpBitcast(ctx.U32[2], ctx.Constant(ctx.U64, base));
+        const Id sum = ctx.OpIAddCarry(ctx.full_result_u32x2,
+                                       ctx.OpCompositeExtract(u32_type, halves, 0u), offset);
+        const Id low = ctx.OpCompositeExtract(u32_type, sum, 0u);
+        const Id high = ctx.OpIAdd(u32_type, ctx.OpCompositeExtract(u32_type, halves, 1u),
+                                   ctx.OpCompositeExtract(u32_type, sum, 1u));
+        return ctx.OpBitcast(ctx.U64, ctx.OpCompositeConstruct(ctx.U32[2], low, high));
     };
     const Id u32x4_ptr = ctx.TypePointer(spv::StorageClass::PhysicalStorageBuffer, ctx.U32[4]);
     const Id f32x4_ptr = ctx.TypePointer(spv::StorageClass::PhysicalStorageBuffer, ctx.F32[4]);
@@ -94,7 +108,7 @@ static void EmitVertexMotion(EmitContext& ctx) {
     const Id flags = ctx.OpCompositeExtract(u32_type, params, 3u);
     const Id offsets = ctx.OpLoad(
         ctx.U32[4], ctx.OpConvertUToPtr(u32x4_ptr,
-            address(MotionVectors::params_address + 16, param_index, 32)),
+            address(MotionVectors::params_address, param_index, 32, 16)),
         spv::MemoryAccessMask::Aligned, 16u);
     const Id first_vertex = ctx.OpCompositeExtract(u32_type, offsets, 0u);
     const Id first_instance = ctx.OpCompositeExtract(u32_type, offsets, 1u);
@@ -118,19 +132,18 @@ static void EmitVertexMotion(EmitContext& ctx) {
     ctx.OpSelectionMerge(store_merge, spv::SelectionControlMask::MaskNone);
     ctx.OpBranchConditional(do_store, store_label, store_merge);
     ctx.AddLabel(store_label);
-    const Id store_address = address(MotionVectors::positions_address,
-                                     ctx.OpIAdd(u32_type, store_base, slot), 16);
-    // Indexed draws may invoke the same vertex more than once, and all these invocations write
-    // the same clip position. gow3 (from SpartanPort 8739c39b): relaxed atomic stores keep those
-    // writes free of data races without returning a value; the device-scope atomic exchanges
-    // they replace lost the device on RDNA2 cards.
+    const Id store_index = ctx.OpIAdd(u32_type, store_base, slot);
+    // Indexed draws may invoke the same vertex more than once. Atomic component stores
+    // avoid write/write races; all these invocations produce the same clip position.
+    // gow3: the RDNA2 device loss SpartanPort put on these exchanges was the truncated address
+    // above (the Uncharted port verified the exchanges on RDNA2 and an RTX 5080).
     const Id scalar_ptr = ctx.TypePointer(spv::StorageClass::PhysicalStorageBuffer, u32_type);
     const Id scope = ctx.ConstU32(static_cast<u32>(spv::Scope::Device));
     for (u32 i = 0; i < 4; ++i) {
-        const Id ptr = ctx.OpConvertUToPtr(scalar_ptr,
-            ctx.OpIAdd(ctx.U64, store_address, ctx.Constant(ctx.U64, u64(i * 4))));
+        const Id ptr = ctx.OpConvertUToPtr(
+            scalar_ptr, address(MotionVectors::positions_address, store_index, 16, i * 4));
         const Id bits = ctx.OpBitcast(u32_type, ctx.OpCompositeExtract(ctx.F32[1], position, i));
-        ctx.OpAtomicStore(ptr, scope, ctx.u32_zero_value, bits);
+        ctx.OpAtomicExchange(u32_type, ptr, scope, ctx.u32_zero_value, bits);
     }
     ctx.OpBranch(store_merge);
     ctx.AddLabel(store_merge);
