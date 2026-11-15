@@ -31,6 +31,10 @@ inline constexpr u32 DefaultHashes[] = {
     0xf82bd030, // the decal box VERTEX shader: every pixel shader variant drawn with it
                 // (53ee1598 in the prologue, 383d5b48 in the next chapter, ...)
     0x95ec1de3, // a second decal shape (ps 6324d6c8, c5f108d0): specks in the chapter 2 tunnel
+    0xa80c1b1b, // decal box (vs 3b129b04, 36 indices) in the station lounge with the spotlights
+                // (frame pass #64): a per-draw check after every draw put the first NaN and
+                // negative pixels of the purple stair-stepped lines in 0x220490000 at this draw
+                // (2026-11-15, RX 7900 XT)
     // Not 262ca505 (ps de99caab): a snapshot for it makes a blue-violet light flicker over whole
     // areas (chapter 2 ruins, 2026-11-10).
 };
