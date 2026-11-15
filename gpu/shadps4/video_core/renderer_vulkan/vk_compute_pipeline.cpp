@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdio>
 #include <atomic>
 #include <boost/container/small_vector.hpp>
 
@@ -116,8 +117,13 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         created =
             instance.GetDevice().createComputePipelineUnique(pipeline_cache, compute_pipeline_ci);
     }
-    ASSERT_MSG(created.result == vk::Result::eSuccess, "Failed to create compute pipeline: {}",
-               vk::to_string(created.result));
+    if (created.result != vk::Result::eSuccess || !created.value) {
+        // gow3 (after SotC bde051e): a compute pipeline the driver refuses ended the game here.
+        // Left without a handle, its dispatches are skipped and it is not saved.
+        std::fprintf(stderr, "GOW3 PIPELINE FAILED compute %s: %s (its dispatches are skipped)\n",
+                     debug_str.c_str(), vk::to_string(created.result).c_str());
+        return;
+    }
     pipeline = std::move(created.value);
     extern std::atomic<u64> g_gow3_driver_pipelines_created;
     g_gow3_driver_pipelines_created.fetch_add(1, std::memory_order_relaxed);
