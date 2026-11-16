@@ -56,6 +56,8 @@ public:
         // made every full-resolution target look like a 75% one, so no pending draw was ever
         // dropped and each new shader stalled the game ~450 ms ("waited 473 ms for a compile:
         // target 0x220490000, 1920 px wide, drawn 50437 frames in a row").
+        // Independent of the display: the output size (1920, 2560, 3440, 3840...) never enters
+        // the comparison, only the scene passes do, so FHD, QHD, 4K and ultrawide behave alike.
         // GOW3_PENDING_WIDEST_ANY=1 counts every color target again.
         if (color && (depth || widest_any) && (width >= widest || frame - widest_frame > 600)) {
             widest = width;
@@ -77,7 +79,8 @@ public:
     /// True when a pending draw into `target` (`width` pixels wide; `color`: it writes a color
     /// buffer, else only depth) may be dropped.
     [[nodiscard]] bool MayDrop(std::uint64_t target, std::uint32_t width, bool color) const {
-        if (!enabled || !target || width < min_width || (!color && !drop_depth) ||
+        // No scene pass seen yet (menus, loading): nothing to compare with, so wait.
+        if (!enabled || !target || !widest || width < min_width || (!color && !drop_depth) ||
             std::uint64_t(width) * 10 < std::uint64_t(widest) * 9) {
             return false;
         }
