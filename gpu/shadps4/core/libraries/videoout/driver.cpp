@@ -33,6 +33,9 @@
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_wait_diagnostics.h"
+#include "sdl_window.h"
+
+extern Frontend::WindowSDL* g_window;
 
 extern std::unique_ptr<Vulkan::Presenter> presenter;
 extern std::unique_ptr<AmdGpu::Liverpool> liverpool;
@@ -721,7 +724,19 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                                 : u32(Gow3Graphics::PresentLimit(s.fps_limit, s.applied_engine_fps));
         }
         const u32 cap = frame_gen_cap();
-        return cap && (!limit || limit > cap) ? cap : limit;
+        limit = cap && (!limit || limit > cap) ? cap : limit;
+        // gow3: a minimized, hidden or covered window draws at most GOW3_BACKGROUND_FPS (30;
+        // 0 = no cap). At full speed the game kept the GPU busy at 144 FPS behind the desktop
+        // while a browser played video on the other monitor, and the session ended in a GPU
+        // hang (device lost) after a few minutes, twice.
+        static const u32 background = [] {
+            const char* env = std::getenv("GOW3_BACKGROUND_FPS");
+            return env && *env ? u32(std::max(0, std::atoi(env))) : 30u;
+        }();
+        if (background && g_window && g_window->IsMinimized() && (!limit || limit > background)) {
+            limit = background;
+        }
+        return limit;
     };
     u32 frame_limit = current_limit();
     auto frame_period = frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
