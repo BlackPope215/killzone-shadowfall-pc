@@ -574,37 +574,8 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
 
     ImGui::Core::TextureManager::Submit();
     auto submit_result = instance.GetGraphicsQueue().submit(submit_info, info.fence);
-    if (submit_result == vk::Result::eErrorDeviceLost && instance.IsDeviceFaultSupported()) {
-        // gow3: the driver's account of the loss, to both logs.
-        const vk::Device device = instance.GetDevice();
-        vk::DeviceFaultCountsEXT counts{};
-        const auto counted = device.getFaultInfoEXT(&counts, nullptr);
-        std::vector<vk::DeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
-        std::vector<vk::DeviceFaultVendorInfoEXT> vendors(counts.vendorInfoCount);
-        counts.vendorBinarySize = 0;
-        vk::DeviceFaultInfoEXT fault{};
-        fault.pAddressInfos = addresses.data();
-        fault.pVendorInfos = vendors.data();
-        const auto got = device.getFaultInfoEXT(&counts, &fault);
-        for (std::FILE* out : {stdout, stderr}) {
-            std::fprintf(out, "Device fault: query %d/%d, \"%s\", %u addresses, %u vendor records\n",
-                         int(counted), int(got), fault.description.data(),
-                         counts.addressInfoCount, counts.vendorInfoCount);
-            for (u32 i = 0; i < counts.addressInfoCount; ++i) {
-                std::fprintf(out, "Device fault:   address type %d at %#llx (precision %#llx)\n",
-                             int(addresses[i].addressType),
-                             static_cast<unsigned long long>(addresses[i].reportedAddress),
-                             static_cast<unsigned long long>(addresses[i].addressPrecision));
-                VideoCore::DescribeDeviceAddress(addresses[i].reportedAddress, out);
-            }
-            for (u32 i = 0; i < counts.vendorInfoCount; ++i) {
-                std::fprintf(out, "Device fault:   vendor \"%s\" code %#llx data %#llx\n",
-                             vendors[i].description.data(),
-                             static_cast<unsigned long long>(vendors[i].vendorFaultCode),
-                             static_cast<unsigned long long>(vendors[i].vendorFaultData));
-            }
-            std::fflush(out);
-        }
+    if (submit_result == vk::Result::eErrorDeviceLost) {
+        instance.ReportDeviceLoss("submit");
     }
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");
 
@@ -649,6 +620,51 @@ void DynamicState::Commit(const Instance& instance, const vk::CommandBuffer& cmd
                        command(cmdbuf);
                    }
                });
+}
+
+/// gow3: the driver's account of a lost device (VK_EXT_device_fault), to both logs. `where`: the
+/// call that saw the loss (submit, swapchain acquire, present).
+void Instance::ReportDeviceLoss(const char* where) const {
+    static std::atomic_flag reported = ATOMIC_FLAG_INIT;
+    if (reported.test_and_set()) {
+        return;
+    }
+    for (std::FILE* out : {stdout, stderr}) {
+        std::fprintf(out, "Device lost (seen at %s)\n", where);
+        std::fflush(out);
+    }
+    if (!IsDeviceFaultSupported()) {
+        return;
+    }
+    const vk::Device device = GetDevice();
+    vk::DeviceFaultCountsEXT counts{};
+    const auto counted = device.getFaultInfoEXT(&counts, nullptr);
+    std::vector<vk::DeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
+    std::vector<vk::DeviceFaultVendorInfoEXT> vendors(counts.vendorInfoCount);
+    counts.vendorBinarySize = 0;
+    vk::DeviceFaultInfoEXT fault{};
+    fault.pAddressInfos = addresses.data();
+    fault.pVendorInfos = vendors.data();
+    const auto got = device.getFaultInfoEXT(&counts, &fault);
+    for (std::FILE* out : {stdout, stderr}) {
+        std::fprintf(out, "Device fault: query %d/%d, \"%s\", %u addresses, %u vendor records\n",
+                     int(counted), int(got), fault.description.data(),
+                     counts.addressInfoCount, counts.vendorInfoCount);
+        for (u32 i = 0; i < counts.addressInfoCount; ++i) {
+            std::fprintf(out, "Device fault:   address type %d at %#llx (precision %#llx)\n",
+                         int(addresses[i].addressType),
+                         static_cast<unsigned long long>(addresses[i].reportedAddress),
+                         static_cast<unsigned long long>(addresses[i].addressPrecision));
+            VideoCore::DescribeDeviceAddress(addresses[i].reportedAddress, out);
+        }
+        for (u32 i = 0; i < counts.vendorInfoCount; ++i) {
+            std::fprintf(out, "Device fault:   vendor \"%s\" code %#llx data %#llx\n",
+                         vendors[i].description.data(),
+                         static_cast<unsigned long long>(vendors[i].vendorFaultCode),
+                         static_cast<unsigned long long>(vendors[i].vendorFaultData));
+        }
+        std::fflush(out);
+    }
 }
 
 } // namespace Vulkan

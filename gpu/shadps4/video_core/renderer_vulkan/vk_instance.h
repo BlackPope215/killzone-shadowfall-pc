@@ -365,6 +365,9 @@ public:
     bool IsDeviceFaultSupported() const {
         return device_fault;
     }
+    /// gow3: logs the loss once, with the driver's fault report when it has one
+    /// (vk_scheduler.cpp). `where`: the call that saw it.
+    void ReportDeviceLoss(const char* where) const;
 
     /// Returns true when the shaderSubgroupClock feature of
     /// gow3: the FSR 4 v07 INT8/DOT4 shaders can run (Float16, Int8, Int16, packed int8 dot
