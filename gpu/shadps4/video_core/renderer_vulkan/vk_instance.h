@@ -314,7 +314,21 @@ public:
     }
 
     /// gow3: whether a required subgroup size may be given for this stage.
+    ///
+    /// On the 64-lane path every stage is pinned, the ones the driver does not list included
+    /// (the original port's rule): the recompiler emits every stage for 64 lanes, and AMD's
+    /// Windows driver lists only fragment/compute/task/mesh (0xf0) yet honours 64 for vertex
+    /// shaders. Left unpinned, vertex shaders ran in 32-lane waves with code built for 64: a
+    /// wave loop over the exec mask never ended and the GPU hung (device lost, ~2.5 s stall,
+    /// empty fault report) every few minutes. GOW3_PIN_ALL_STAGES=0 pins only listed stages.
     bool CanRequireSubgroupSize(vk::ShaderStageFlagBits stage) const {
+        static const bool pin_all = [] {
+            const char* v = std::getenv("GOW3_PIN_ALL_STAGES");
+            return !(v && v[0] == '0');
+        }();
+        if (pin_all && IsSubgroupSize64Supported()) {
+            return true;
+        }
         return !SubgroupStageCheck() || bool(vk13_props.requiredSubgroupSizeStages & stage);
     }
 

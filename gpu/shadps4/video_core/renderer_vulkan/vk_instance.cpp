@@ -635,7 +635,10 @@ bool Instance::CreateDevice() {
                 vk11_props.subgroupSize, vk13_props.minSubgroupSize, vk13_props.maxSubgroupSize,
                 static_cast<unsigned>(vk13_props.requiredSubgroupSizeStages),
                 int(vk13_features.subgroupSizeControl),
-                IsSubgroupSize64Supported()          ? "64 in compute and pixel shaders"
+                IsSubgroupSize64Supported()
+                    ? (CanRequireSubgroupSize(vk::ShaderStageFlagBits::eVertex)
+                           ? "64 in every stage"
+                           : "64 in compute and pixel shaders")
                 : IsComputeSubgroupSize32Required() ? "compute pinned to 32, lowered for 32"
                                                      : "driver default");
     // gow3: DLSS (optional bridge DLL) needs its own device extensions on NVIDIA GPUs.
