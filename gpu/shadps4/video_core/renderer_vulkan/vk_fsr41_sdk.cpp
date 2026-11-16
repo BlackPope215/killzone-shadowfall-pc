@@ -30,14 +30,26 @@ constexpr wchar_t LoaderName[] = L"amd_fidelityfx_loader_vk.dll";
 constexpr wchar_t UpscalerName[] = L"amd_fidelityfx_upscaler_vk.dll";
 
 #ifdef _WIN32
-std::filesystem::path DllDirectory() {
-    if (const wchar_t* env = _wgetenv(L"GOW3_FFX_DIR"); env && env[0]) {
-        return env;
-    }
+std::filesystem::path ExecutableDirectory() {
     std::wstring path(MAX_PATH, L'\0');
     const DWORD length = GetModuleFileNameW(nullptr, path.data(), DWORD(path.size()));
     path.resize(length);
     return std::filesystem::path{path}.parent_path();
+}
+
+bool HasDlls(const std::filesystem::path& directory) {
+    std::error_code error;
+    return std::filesystem::exists(directory / LoaderName, error) &&
+           std::filesystem::exists(directory / UpscalerName, error);
+}
+
+/// GOW3_FFX_DIR (the launcher's fsr4_shaders folder, where it downloads them) when it holds
+/// both DLLs, else the executable's folder.
+std::filesystem::path DllDirectory() {
+    if (const wchar_t* env = _wgetenv(L"GOW3_FFX_DIR"); env && env[0] && HasDlls(env)) {
+        return env;
+    }
+    return ExecutableDirectory();
 }
 #endif
 
@@ -93,8 +105,7 @@ struct Fsr41Sdk::Impl {
             return true;
         }
         const auto directory = DllDirectory();
-        if (!std::filesystem::exists(directory / LoaderName) ||
-            !std::filesystem::exists(directory / UpscalerName)) {
+        if (!HasDlls(directory)) {
             Fail("amd_fidelityfx_loader_vk.dll / amd_fidelityfx_upscaler_vk.dll not found in " +
                      directory.string(),
                  true);
