@@ -50,18 +50,25 @@ public:
         if (!target) {
             return;
         }
-        // The widest color target of the last ~10 s (600 flips) is the render resolution
-        // (shadow maps, depth only, can be wider). gow3: only scene passes count, those with a
-        // depth buffer as well: the UI composed at the output size (2560 wide for a 1920 scene)
-        // made every full-resolution target look like a 75% one, so no pending draw was ever
-        // dropped and each new shader stalled the game ~450 ms ("waited 473 ms for a compile:
-        // target 0x220490000, 1920 px wide, drawn 50437 frames in a row").
-        // Independent of the display: the output size (1920, 2560, 3440, 3840...) never enters
-        // the comparison, only the scene passes do, so FHD, QHD, 4K and ultrawide behave alike.
-        // GOW3_PENDING_WIDEST_ANY=1 counts every color target again.
-        if (color && (depth || widest_any) && (width >= widest || frame - widest_frame > 600)) {
-            widest = width;
-            widest_frame = frame;
+        // The scene width: the widest color target drawn with a depth buffer in the last 32-64
+        // flips (shadow maps, depth only, can be wider). gow3: only scene passes count: the UI
+        // composed at the output size (2560 wide for a 1920 scene) made every full-resolution
+        // target look like a 75% one, so no pending draw was ever dropped and each new shader
+        // stalled the game ~450 ms ("waited 473 ms for a compile: target 0x220490000, 1920 px
+        // wide, drawn 50437 frames in a row"). A short window, not a 10 s maximum: a wider pass
+        // during a loading screen or a resolution change no longer blocks the drops of the next
+        // area for 10 s, just when its new shaders compile. Independent of the display: the
+        // output size (1920, 2560, 3440, 3840...) never enters the comparison, so FHD, QHD, 4K
+        // and ultrawide behave alike. GOW3_PENDING_WIDEST_ANY=1 counts every color target again.
+        if (color && (depth || widest_any)) {
+            const std::uint64_t window = frame / 32;
+            if (window != widest_window) {
+                prev_widest = window == widest_window + 1 ? cur_widest : 0;
+                cur_widest = 0;
+                widest_window = window;
+            }
+            cur_widest = width > cur_widest ? width : cur_widest;
+            widest = cur_widest > prev_widest ? cur_widest : prev_widest;
         }
         Seen& s = seen[target];
         if (s.streak && frame == s.last) {
@@ -105,9 +112,10 @@ public:
             ++long_waits_logged;
             const auto it = seen.find(target);
             std::printf("Shaders: waited %.0f ms for a compile: target %#llx, %u px wide, drawn %u "
-                        "frames in a row\n",
+                        "frames in a row, scene width %u%s\n",
                         ms, static_cast<unsigned long long>(target), width,
-                        it != seen.end() ? it->second.streak : 0u);
+                        it != seen.end() ? it->second.streak : 0u, widest,
+                        enabled ? "" : " (skipping off: GOW3_SMART_PENDING=0)");
             std::fflush(stdout);
         }
     }
@@ -164,8 +172,8 @@ private:
     std::uint32_t streak_needed = 12;
     std::uint32_t min_width = 640;
     bool drop_depth = false;
-    std::uint32_t widest = 0;
-    std::uint64_t widest_frame = 0;
+    std::uint32_t widest = 0, cur_widest = 0, prev_widest = 0;
+    std::uint64_t widest_window = 0;
     std::unordered_map<std::uint64_t, Seen> seen;
     std::unordered_map<std::uint64_t, Drops> dropped_by_target;
     std::uint32_t dropped = 0, waits = 0, long_waits_logged = 0;
