@@ -726,9 +726,10 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         const u32 cap = frame_gen_cap();
         limit = cap && (!limit || limit > cap) ? cap : limit;
         // gow3: a minimized, hidden or covered window draws at most GOW3_BACKGROUND_FPS (30;
-        // 0 = no cap). At full speed the game kept the GPU busy at 144 FPS behind the desktop
-        // while a browser played video on the other monitor, and the session ended in a GPU
-        // hang (device lost) after a few minutes, twice.
+        // 0 = no cap). Minimized, the game kept rendering at the full limit (144 FPS) while
+        // nothing was presented: GPU time and power spent for nothing. (It was first taken for
+        // the cause of the GPU hangs seen on an RX 7900 XT; they also happened in normal play,
+        // so it is not their fix.)
         static const u32 background = [] {
             const char* env = std::getenv("GOW3_BACKGROUND_FPS");
             return env && *env ? u32(std::max(0, std::atoi(env))) : 30u;
