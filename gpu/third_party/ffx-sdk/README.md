@@ -8,7 +8,9 @@ https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK, tag v2.4.0:
 - `upscalers/include/ffx_upscale.h` (Kits/FidelityFX/upscalers/include)
 
 Used by `gpu/shadps4/video_core/renderer_vulkan/vk_fsr41_sdk.cpp`, which loads AMD's signed
-DLLs at run time from the game's `bin` folder (nothing is linked at build time):
+DLLs at run time (nothing is linked at build time) from `GOW3_FFX_DIR` when it holds them (the
+launcher downloads them into `fsr4_shaders` with the v07 shaders, `launcher/kzsf_fsr4.py`), else
+from the game's `bin` folder:
 
 - `amd_fidelityfx_loader_vk.dll`
 - `amd_fidelityfx_upscaler_vk.dll`

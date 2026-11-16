@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // gow3: FSR Upscaling 4.1 through AMD's FSR SDK 2.4 for Vulkan. The signed DLLs
 // (amd_fidelityfx_loader_vk.dll, amd_fidelityfx_upscaler_vk.dll) are loaded at run time from
-// the executable's folder (GOW3_FFX_DIR overrides); the SDK picks the newest upscaler the GPU and
+// GOW3_FFX_DIR (the launcher's fsr4_shaders folder) or the executable's folder; the SDK picks the newest upscaler the GPU and
 // driver support (FSR 4.1.2 INT8 on RX 7000 with AMD Software 26.10.1 or later, FP8 on RX 9000,
 // else FSR 3.1.6). Kept in its own translation unit: the SDK headers share names with the
 // FSR-Vulkan ones vk_fsr4.cpp uses.

@@ -215,7 +215,7 @@ TEXTS = {
         'res_method_fsr4': 'AMD FSR 4 (mejor calidad)',
         'fsr4_files': 'Archivos de FSR 4',
         'fsr4_ready': 'Instalados',
-        'fsr4_missing': 'No instalados (unos 30 MB)',
+        'fsr4_missing': 'No instalados (unos 100 MB)',
         'fsr4_download': 'Descargar',
         'fsr4_downloading': 'Descargando… {done}/{total}',
         'fsr4_failed': 'Falló la descarga: {error}',
@@ -437,7 +437,7 @@ TEXTS = {
         'res_method_fsr4': 'AMD FSR 4 (best quality)',
         'fsr4_files': 'FSR 4 files',
         'fsr4_ready': 'Installed',
-        'fsr4_missing': 'Not installed (about 30 MB)',
+        'fsr4_missing': 'Not installed (about 100 MB)',
         'fsr4_download': 'Download',
         'fsr4_downloading': 'Downloading… {done}/{total}',
         'fsr4_failed': 'Download failed: {error}',
@@ -1147,6 +1147,8 @@ def game_env(settings, graphics, needs_update):
         upscaler = {'dlss': 'dlss', 'fsr4': 'fsr4'}.get(method, 'fsr3')
         env.update({'GOW3_OUTPUT_RES': output, 'GOW3_UPSCALER': upscaler,
                     'GOW3_FSR4_DIR': os.environ.get('GOW3_FSR4_DIR', str(FSR4_DIR)),
+                    # AMD's FSR SDK DLLs (FSR 4.1.2), downloaded with the shaders.
+                    'GOW3_FFX_DIR': os.environ.get('GOW3_FFX_DIR', str(FSR4_DIR)),
                     'GOW3_SCENE_NATIVE': '1',
                     'GOW3_JITTER': os.environ.get('GOW3_JITTER', '1'),
                     'GOW3_FRAME_GEN': frame_gen})
