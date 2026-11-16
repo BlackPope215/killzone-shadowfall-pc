@@ -45,27 +45,28 @@ FSR 4 now runs through AMD's official FSR SDK 2.4 for Vulkan when its signed DLL
 (`amd_fidelityfx_loader_vk.dll`, `amd_fidelityfx_upscaler_vk.dll`, SDK tag v2.4.0,
 `Kits/FidelityFX/signedbin`) are in the game's `bin` folder. The SDK picks the newest upscaler
 the GPU and driver support: on the RX 7900 XT it chose **FSR Upscaling 4.1.2** (INT8 model).
-Same inputs as before; ~134 FPS average vs ~117-121 with the v07 model in comparable scenes; the
-v07 edge fix is not needed. Without the DLLs, or when the SDK refuses the device, the v07 model is
+Same inputs as before; ~134 FPS average vs ~117-121 with the v07 model in comparable scenes. Its
+output shows the same lines on the last rows and columns as v07's, so the edge fix runs for both. Without the DLLs, or when the SDK refuses the device, the v07 model is
 used as before (`GOW3_FSR4_SDK=0` forces it). Headers (MIT) in `gpu/third_party/ffx-sdk`.
 
 ## Stability
 
-- Subgroup size: 64 lanes are pinned only in the stages the driver allows
-  (`requiredSubgroupSizeStages` is `0xf0` on AMD Windows: not vertex). Requiring vertex as well
-  sent compute down the 32-lane path. `GOW3_SUBGROUP_STAGES=0` restores the old check.
+- **GPU hangs (device lost) fixed:** the recompiler emits every stage for 64 lanes, but after
+  the Shadow of the Colossus subgroup change only the stages the driver lists in
+  `requiredSubgroupSizeStages` were pinned to 64. AMD's Windows driver lists `0xf0` (no vertex),
+  so vertex shaders ran in 32-lane waves with code built for 64: a wave loop over the exec mask
+  never ended, the GPU hung for ~2.5 s and was reset (device lost every 2-7 minutes, any
+  upscaler, empty fault report). On the 64-lane path every stage is pinned again, as in the
+  original port (AMD honours it for vertex shaders); `GOW3_PIN_ALL_STAGES=0` pins only the
+  listed stages. Confirmed: no hang in a long session that hung within minutes before.
+- Compute is still never sent down a 32-lane path while 64 can be pinned for fragment and
+  compute (`GOW3_SUBGROUP_STAGES=0` restores the original checks).
 - A graphics or compute pipeline the driver refuses skips its draws / dispatches instead of
   ending the game.
 - Device lost: the driver's fault report (`VK_EXT_device_fault`) is now logged also when the
   swapchain acquire or present sees the loss first (before, only a failed queue submit read it).
 - A minimized or hidden window draws at most 30 FPS (`GOW3_BACKGROUND_FPS`, 0 = off) instead of
   rendering at the full limit for nothing.
-
-**Open:** GPU hangs (device lost, a ~2.5 s stall then TDR) after 3-7 minutes of full GPU load,
-in normal play, with both the v07 FSR 4 and FSR 3.1. The fault report is empty ("Device lost
-detected", no address): a timeout, not a page fault. Not yet seen with FSR 4.1.2 (one 5-minute
-session so far); a browser with hardware acceleration playing video on a second monitor was
-running during the hangs and is the next suspect.
 
 ## From other PS4 ports
 
