@@ -40,16 +40,24 @@ public:
         streak_needed = static_cast<std::uint32_t>(Env("GOW3_PENDING_STREAK", 12));
         min_width = static_cast<std::uint32_t>(Env("GOW3_PENDING_MIN_WIDTH", 640));
         drop_depth = Env("GOW3_PENDING_DROP_DEPTH", 0) != 0;
+        widest_any = Env("GOW3_PENDING_WIDEST_ANY", 0) != 0;
     }
 
     /// Records a draw into `target` (color or depth address, `width` pixels) during `frame`.
-    void Note(std::uint64_t target, std::uint32_t width, bool color, std::uint64_t frame) {
+    /// `depth`: the draw also has a depth buffer (scene passes).
+    void Note(std::uint64_t target, std::uint32_t width, bool color, std::uint64_t frame,
+              bool depth = true) {
         if (!target) {
             return;
         }
         // The widest color target of the last ~10 s (600 flips) is the render resolution
-        // (shadow maps, depth only, can be wider).
-        if (color && (width >= widest || frame - widest_frame > 600)) {
+        // (shadow maps, depth only, can be wider). gow3: only scene passes count, those with a
+        // depth buffer as well: the UI composed at the output size (2560 wide for a 1920 scene)
+        // made every full-resolution target look like a 75% one, so no pending draw was ever
+        // dropped and each new shader stalled the game ~450 ms ("waited 473 ms for a compile:
+        // target 0x220490000, 1920 px wide, drawn 50437 frames in a row").
+        // GOW3_PENDING_WIDEST_ANY=1 counts every color target again.
+        if (color && (depth || widest_any) && (width >= widest || frame - widest_frame > 600)) {
             widest = width;
             widest_frame = frame;
         }
@@ -123,8 +131,8 @@ public:
             }
         }
         std::printf("Shaders: %u draws skipped while compiling (live targets), %u waits for a "
-                    "compile (%.0f ms in all, worst %.0f ms)%s\n",
-                    dropped, waits, wait_ms, worst_ms, top);
+                    "compile (%.0f ms in all, worst %.0f ms), scene width %u%s\n",
+                    dropped, waits, wait_ms, worst_ms, widest, top);
         std::fflush(stdout);
         dropped_by_target.clear();
         dropped = waits = 0;
@@ -136,6 +144,7 @@ public:
     }
 
 private:
+    bool widest_any = false;
     struct Seen {
         std::uint64_t last = 0;
         std::uint32_t streak = 0;
