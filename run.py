@@ -290,8 +290,12 @@ def main():
         env.setdefault('GOW3_READBACK_LINEAR', '1')
         if profile:
             names = selected_patches(profile[1], profile[2], env.get('GOW3_PATCHES', ''), env.get('GOW3_PATCHES_ONLY') == '1')
+            # A game without frame rate patches (Killzone times its frames itself) gets none asked
+            # for: no "not available ... skipped" line for something it never needed.
+            fps_patches = any(n.startswith(graphics_options.FPS_PREFIX)
+                              for n in patches.available_patches(profile[1], profile[2]))
             # gow3.ini decides the resolution and frame rate patches (in-game menu, launcher).
-            names = graphics_options.patch_names(names, graphics)
+            names = graphics_options.patch_names(names, graphics if fps_patches else {**graphics, 'engine_fps': '60'})
             # A 3D scene above 1080p (ultrawide, GOW3_RENDER_RES): the smallest "Scene memory" patch
             # for its pixels (~430 MiB of video pool per extra 1080p, tools/make_kzsf_res_patches.py).
             if (memory := scene_memory_patch(env.get('GOW3_RENDER_RES', ''))):
@@ -300,8 +304,7 @@ def main():
             env['GOW3_PATCHES'] = ';'.join(names)
             env['GOW3_PATCHES_ONLY'] = '1'
             # The in-game menu offers the engine frame rate only when this game has such patches.
-            env['GOW3_FPS_PATCHES'] = '1' if any(n.startswith(graphics_options.FPS_PREFIX) for n in
-                                                 patches.available_patches(profile[1], profile[2])) else '0'
+            env['GOW3_FPS_PATCHES'] = '1' if fps_patches else '0'
         (out / 'patch_status.json').unlink(missing_ok=True)
         run_script('patches.py', '--out', out, '--extra', env.get('GOW3_PATCHES', ''), '--game-dir', game,
                    '--patches-dir', env.get('GOW3_PATCHES_DIR', data / 'patches'),
@@ -323,9 +326,13 @@ def main():
         # not flip faster (gow3_graphics.h PresentLimit), or the game speeds up.
         env['GOW3_ENGINE_FPS'] = str(engine_fps)
         derived.append('GOW3_ENGINE_FPS')
-        print(f'Engine frame rate: {engine_fps} FPS'
-              + ('' if engine_fps > 60 or graphics['engine_fps'] == '60' else
-                 ' (the frame rate patch was not found in this eboot.bin)'), flush=True)
+        if env.get('GOW3_FPS_PATCHES') == '0':
+            # Killzone: frame time from the guest clock; the frame limit alone sets the rate.
+            print('Engine frame rate: set by the frame limit (this game needs no frame rate patch)', flush=True)
+        else:
+            print(f'Engine frame rate: {engine_fps} FPS'
+                  + ('' if engine_fps > 60 or graphics['engine_fps'] == '60' else
+                     ' (the frame rate patch was not found in this eboot.bin)'), flush=True)
         glyph_args, glyph_style = glyph_mounts(env, probe, game, out)
         if glyph_style:  # the in-game menu names the buttons the same way
             env['GOW3_GLYPHS'] = glyph_style
