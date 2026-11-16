@@ -183,6 +183,9 @@ bool Swapchain::AcquireNextImage() {
         needs_recreation = true;
         break;
     default:
+        if (result == vk::Result::eErrorDeviceLost) {
+            instance.ReportDeviceLoss("swapchain acquire");
+        }
         LOG_CRITICAL(Render_Vulkan, "Swapchain acquire returned unknown result {}",
                      vk::to_string(result));
         UNREACHABLE();
@@ -210,6 +213,9 @@ bool Swapchain::Present() {
         result == vk::Result::eErrorSurfaceLostKHR) {
         needs_recreation = true;
     } else {
+        if (result == vk::Result::eErrorDeviceLost) {
+            instance.ReportDeviceLoss("present");
+        }
         ASSERT_MSG(result == vk::Result::eSuccess, "Swapchain presentation failed: {}",
                    vk::to_string(result));
     }
