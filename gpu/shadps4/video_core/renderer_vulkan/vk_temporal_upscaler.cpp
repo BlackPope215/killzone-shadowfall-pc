@@ -1163,8 +1163,9 @@ void TemporalUpscaler::Run() {
         RecordTaa(cmdbuf, input_color_view, input_depth_view);
         dispatched = true;
     } else if (UseFsr4()) {
-        dispatched = RecordFsr4(cmdbuf, {input_color, input_color_view, w, h},
-                                {input_depth, input_depth_view, w, h}, w, h, ow, oh, frame_ms);
+        dispatched = RecordFsr4(cmdbuf, {input_color, input_color_view, w, h, color.info.pixel_format},
+                                {input_depth, input_depth_view, w, h, depth_format, true}, w, h, ow,
+                                oh, frame_ms);
     } else if (UseDlss()) {
         dispatched = RecordDlss(
             cmdbuf,
@@ -1763,9 +1764,12 @@ void TemporalUpscaler::RunScaled() {
                               source_width, source_height},
                              w, h, ow, oh, frame_ms, false);
         } else if (UseFsr4()) {
-            ok4 = RecordFsr4(cmdbuf, {color_image, color_view, source_width, source_height},
-                            {depth_image, depth_view, source_width, source_height}, w, h, ow,
-                            oh, frame_ms);
+            ok4 = RecordFsr4(cmdbuf,
+                             {color_image, color_view, source_width, source_height,
+                              color.info.pixel_format},
+                             {depth_image, depth_view, source_width, source_height, depth_format,
+                              true},
+                             w, h, ow, oh, frame_ms);
         } else {
             ok4 = RecordFsr3Scaled(cmdbuf, color_image, color.info.pixel_format, color.usage_flags,
                                    depth_image, depth_format, depth.usage_flags, source_width,
@@ -2235,6 +2239,7 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         .sharpen = settings.sharpen,
         .reset = reset,
         .auto_exposure = settings.fsr4_auto_exposure,
+        .hdr = context_hdr,
     });
     // The menu shows the reason; it outlives this frame (FSR 4 keeps its last message).
     static std::string shown;
@@ -2249,7 +2254,7 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         Gow3Settings::Get().fsr4_problem = kept[next].c_str();
         next = (next + 1) % kept.size();
     }
-    if (ok) {
+    if (ok && fsr4->NeedsEdgeFix()) {
         FixFsr4Edges(cmdbuf, ow, oh);
     }
     if (!ok && fsr4->Fatal()) {
