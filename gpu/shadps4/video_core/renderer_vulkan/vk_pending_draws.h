@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <unordered_map>
+#include "video_core/renderer_vulkan/vk_async_compiler.h"
 
 namespace Vulkan {
 
@@ -152,9 +153,12 @@ public:
                 break;
             }
         }
+        const auto run_here = g_gow3_jobs_run_by_waiter.exchange(0, std::memory_order_relaxed);
         std::printf("Shaders: %u draws skipped while compiling (live targets), %u waits for a "
-                    "compile (%.0f ms in all, worst %.0f ms), scene width %u%s\n",
-                    dropped, waits, wait_ms, worst_ms, widest, top);
+                    "compile (%.0f ms in all, worst %.0f ms, %llu jobs run while waiting), scene "
+                    "width %u%s\n",
+                    dropped, waits, wait_ms, worst_ms, static_cast<unsigned long long>(run_here),
+                    widest, top);
         std::fflush(stdout);
         dropped_by_target.clear();
         dropped = waits = 0;

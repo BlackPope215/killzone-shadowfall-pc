@@ -4,6 +4,7 @@
 #include <chrono>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <condition_variable>
 #include <deque>
@@ -99,6 +100,10 @@ private:
     std::vector<std::thread> workers;
 };
 
+/// gow3: compile jobs the waiting thread ran itself instead of waiting in the queue
+/// (AsyncJob::Wait); reported with the "Shaders: ... draws skipped" line.
+inline std::atomic<uint64_t> g_gow3_jobs_run_by_waiter{0};
+
 // gow3: one job per cache entry; failures are terminal until the next session.
 template <typename T>
 class AsyncJob {
@@ -108,22 +113,35 @@ public:
         if (started) {
             return false;
         }
-        auto task = std::make_shared<std::packaged_task<T()>>(std::forward<F>(function));
-        auto completion = task->get_future();
-        if (!compiler.Submit([task] { (*task)(); }, priority)) {
+        auto state = std::make_shared<State>(std::forward<F>(function));
+        auto completion = state->task.get_future();
+        if (!compiler.Submit([state] { state->Run(); }, priority)) {
             return false;
         }
         future = std::move(completion);
+        this->state = std::move(state);
         started = true;
         return true;
     }
     bool Pending() const { return future.valid(); }
     bool Failed() const { return failed; }
     const std::string& Error() const { return error; }
+    /// Waits for the job. One still queued runs on the waiting thread at once: a draw waiting
+    /// for its pipeline no longer waits behind the whole queue (a new area queued ~300 compiles
+    /// and a live draw waited 1.2 s, 452 ms of it in the queue). The pipeline caches the jobs
+    /// use are internally synchronized. GOW3_WAIT_RUNS_JOB=0 waits as before.
     void Wait() const {
-        if (future.valid()) {
-            future.wait();
+        if (!future.valid()) {
+            return;
         }
+        static const bool run_here = [] {
+            const char* env = std::getenv("GOW3_WAIT_RUNS_JOB");
+            return !env || env[0] != '0';
+        }();
+        if (run_here && state && state->Run()) {
+            g_gow3_jobs_run_by_waiter.fetch_add(1, std::memory_order_relaxed);
+        }
+        future.wait();
     }
     std::optional<T> Poll() {
         if (!future.valid() || future.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
@@ -141,6 +159,21 @@ public:
     }
 
 private:
+    struct State {
+        template <typename F>
+        explicit State(F&& function) : task(std::forward<F>(function)) {}
+        /// Runs the task unless another thread claimed it; true when this call ran it.
+        bool Run() {
+            if (claimed.exchange(true, std::memory_order_acq_rel)) {
+                return false;
+            }
+            task();
+            return true;
+        }
+        std::packaged_task<T()> task;
+        std::atomic<bool> claimed{false};
+    };
+    std::shared_ptr<State> state;
     std::future<T> future;
     bool started = false;
     bool failed = false;
