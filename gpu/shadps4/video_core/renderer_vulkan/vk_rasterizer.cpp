@@ -217,7 +217,8 @@ const GraphicsPipeline* ResolvePending(PipelineCache& cache, const GraphicsPipel
         return env && env[0] == '1';
     }();
     const auto [target, width, color] = PendingTarget(regs);
-    pending_policy.Note(target, width, color, gow3_flip_count.load(std::memory_order_relaxed));
+    pending_policy.Note(target, width, color, gow3_flip_count.load(std::memory_order_relaxed),
+                        regs.depth_buffer.DepthValid());
     if (!pipeline && !skip_pending && cache.LookupPending()) {
         if (pending_policy.MayDrop(target, width, color)) {
             pending_policy.CountDropped(target, width);
