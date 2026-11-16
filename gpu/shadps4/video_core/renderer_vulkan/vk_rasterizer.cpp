@@ -310,7 +310,29 @@ void Rasterizer::SnapshotFeedbackTextures(const GraphicsPipeline* pipeline) {
     if (!ps) {
         return;
     }
+    diag_fb_targets.clear();
     if (!FeedbackCopy::Wanted(ps->pgm_hash, pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash)) {
+        // gow3 diagnostics: GOW3_DIAG_IMAGES=4 checks, in a captured frame, each target that a
+        // feedback-loop draw without snapshot also samples, before and after the draw: a race
+        // that corrupts it (as the decal pass's purple lines did, NaN and negative pixels) shows
+        // as "DiagStats fbpost_..." with higher counts than the "fbpre_..." line before it.
+        static const bool diag_fb = [] {
+            const char* env = std::getenv("GOW3_DIAG_IMAGES");
+            return env && *env == '4';
+        }();
+        if (diag_fb && FrameCapture::IsRecording()) {
+            for (u32 cb = 0; cb < cb_descs.size(); ++cb) {
+                const auto id = cb_descs[cb].first;
+                if (id && texture_cache.GetImage(id).binding.is_bound) {
+                    char tag[64];
+                    std::snprintf(tag, sizeof(tag), "fbpre_d%05u_ps%08x_t%u", diag_draw,
+                                  static_cast<u32>(ps->pgm_hash), cb);
+                    texture_cache.DiagDumpImage(id, tag);
+                    diag_fb_targets.push_back(id);
+                }
+            }
+            diag_fb_ps = ps->pgm_hash;
+        }
         // GOW3_FB_LOG=1: name each pixel shader that samples its own targets without a
         // snapshot (candidates when artifacts remain), once per shader.
         static const bool log_on = std::getenv("GOW3_FB_LOG") != nullptr;
@@ -1934,6 +1956,16 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             return env && *env ? static_cast<VAddr>(std::strtoull(env, nullptr, 16))
                                : VAddr{0x220490000};
         }();
+        if (diag_mode == 4 && FrameCapture::IsRecording()) {
+            for (u32 i = 0; i < diag_fb_targets.size(); ++i) {
+                char tag[64];
+                std::snprintf(tag, sizeof(tag), "fbpost_d%05u_ps%08x_vs%08x", diag_draw,
+                              static_cast<u32>(diag_fb_ps), static_cast<u32>(vs_info.pgm_hash));
+                texture_cache.DiagDumpImage(diag_fb_targets[i], tag);
+            }
+            diag_fb_targets.clear();
+            ++diag_draw;
+        }
         if (diag_mode == 3 && FrameCapture::IsRecording()) {
             for (const auto image_id : diag_targets) {
                 if (texture_cache.GetImage(image_id).info.guest_address != diag_addr) {

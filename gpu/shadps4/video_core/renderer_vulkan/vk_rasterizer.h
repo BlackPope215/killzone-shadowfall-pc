@@ -429,6 +429,10 @@ private:
     boost::container::static_vector<VideoCore::ImageId, 8> diag_targets;
     u32 diag_pass{};
     u32 diag_draw{}; ///< GOW3_DIAG_IMAGES=3: draws checked in the captured frame
+    /// GOW3_DIAG_IMAGES=4: the targets the current feedback-loop draw (no snapshot) also
+    /// samples, checked before and after it.
+    boost::container::static_vector<VideoCore::ImageId, 8> diag_fb_targets;
+    u64 diag_fb_ps{};
     struct BoundBuffer {
         const VideoCore::Buffer* buffer;
         u64 offset;

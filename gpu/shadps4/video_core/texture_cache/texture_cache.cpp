@@ -447,7 +447,7 @@ void TextureCache::DiagDumpImage(ImageId image_id, const char* tag) {
     // first draws the purple lines.
     static const bool stats_only = [] {
         const char* env = std::getenv("GOW3_DIAG_IMAGES");
-        return env && (*env == '2' || *env == '3');
+        return env && (*env == '2' || *env == '3' || *env == '4');
     }();
     {
         const auto half = [](u16 h) -> float {
@@ -503,7 +503,7 @@ void TextureCache::DiagDumpImage(ImageId image_id, const char* tag) {
         // GOW3_DIAG_IMAGES=3 (a check after every draw): only the draws that change the counts.
         static const bool per_draw = [] {
             const char* env = std::getenv("GOW3_DIAG_IMAGES");
-            return env && *env == '3';
+            return env && (*env == '3' || *env == '4');
         }();
         static std::unordered_map<VAddr, std::array<u64, 4>> last_counts;
         bool changed = true;
