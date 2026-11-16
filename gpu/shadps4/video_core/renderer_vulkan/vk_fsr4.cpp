@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_vulkan/vk_fsr4.h"
+#include "video_core/renderer_vulkan/vk_fsr41_sdk.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -71,6 +72,13 @@ struct Fsr4Upscaler::Impl {
     std::unique_ptr<Fsr411::Upscaler> fsr411;
     std::deque<u64> fsr411_ticks; ///< scheduler ticks of its recent frames (constant ring)
     std::string fsr411_described;
+    // gow3: AMD's FSR SDK 2.4 (FSR 4.1.2) when its DLLs are present; GOW3_FSR4_SDK=0 keeps v07.
+    std::unique_ptr<Fsr41Sdk> sdk;
+    bool sdk_off = [] {
+        const char* env = std::getenv("GOW3_FSR4_SDK");
+        return env && env[0] == '0';
+    }();
+    bool last_from_sdk = false;
 
     Impl(const Instance& instance_, Scheduler& scheduler_)
         : instance{instance_}, scheduler{scheduler_} {}
@@ -277,8 +285,27 @@ struct Fsr4Upscaler::Impl {
 
     bool Record(const Frame& f) {
         if (Gow3Settings::Get().upscaler == Gow3Settings::UpscalerFsr411) {
+            last_from_sdk = false;
             return Record411(f);
         }
+        if (!sdk_off) {
+            if (!sdk) {
+                sdk = std::make_unique<Fsr41Sdk>(instance, scheduler);
+            }
+            if (sdk->Record(f)) {
+                last_from_sdk = true;
+                problem.clear();
+                return true;
+            }
+            if (!sdk->Fatal()) {
+                problem = sdk->Problem();
+                return false; // a frame-level failure: try again next frame
+            }
+            std::printf("Upscaler: FSR 4 falls back to the v07 model (%s)\n", sdk->Problem().c_str());
+            sdk_off = true;
+            sdk.reset();
+        }
+        last_from_sdk = false;
         if (fatal) {
             return false;
         }
@@ -393,6 +420,10 @@ const char* Fsr4Upscaler::Problem() const noexcept {
 
 bool Fsr4Upscaler::Fatal() const noexcept {
     return impl->fatal;
+}
+
+bool Fsr4Upscaler::NeedsEdgeFix() const noexcept {
+    return !impl->last_from_sdk;
 }
 
 } // namespace Vulkan

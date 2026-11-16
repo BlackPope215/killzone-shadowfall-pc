@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// gow3: FSR 4 (source-v07 INT8/DOT4 model, FSR-Vulkan provider) as an alternative to the
+// gow3: FSR 4: AMD's FSR SDK 2.4 (FSR Upscaling 4.1.2, vk_fsr41_sdk) when its signed DLLs are
+// beside the game, else the source-v07 INT8/DOT4 model (FSR-Vulkan provider), as an alternative to the
 // FSR 3.1 context of TemporalUpscaler. It consumes the same inputs: HDR scene color, depth,
 // motion vectors in render pixels (previous - current) and the jitter offset.
 //
@@ -29,6 +30,8 @@ public:
         vk::Image image;
         vk::ImageView view;
         u32 width, height;
+        vk::Format format = vk::Format::eUndefined; ///< the image's own format (AMD FSR SDK path)
+        bool depth = false;                         ///< a depth image (AMD FSR SDK path)
     };
     struct Frame {
         vk::CommandBuffer cmdbuf;
@@ -39,6 +42,7 @@ public:
         float frame_ms, near_plane, far_plane, vertical_fov;
         float sharpness;
         bool sharpen, reset, auto_exposure;
+        bool hdr = true; ///< color is the HDR scene color (else the game's tonemapped frame)
     };
 
     /// Records FSR 4 into `frame.cmdbuf`; the output stays in General. False when FSR 4
@@ -49,6 +53,9 @@ public:
     [[nodiscard]] const char* Problem() const noexcept;
     /// Assets or device features are missing: FSR 4 will not run in this session.
     [[nodiscard]] bool Fatal() const noexcept;
+    /// The last frame came from the v07 model, whose last rows and columns need repeating
+    /// (TemporalUpscaler::FixFsr4Edges); AMD's SDK output needs no fix.
+    [[nodiscard]] bool NeedsEdgeFix() const noexcept;
 
 private:
     struct Impl;
