@@ -53,8 +53,8 @@ public:
     [[nodiscard]] const char* Problem() const noexcept;
     /// Assets or device features are missing: FSR 4 will not run in this session.
     [[nodiscard]] bool Fatal() const noexcept;
-    /// The last frame came from the v07 model, whose last rows and columns need repeating
-    /// (TemporalUpscaler::FixFsr4Edges); AMD's SDK output needs no fix.
+    /// The last rows and columns need repeating (TemporalUpscaler::FixFsr4Edges): true for the
+    /// v07 model and for AMD's SDK alike.
     [[nodiscard]] bool NeedsEdgeFix() const noexcept;
 
 private:
