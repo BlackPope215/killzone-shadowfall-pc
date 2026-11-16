@@ -423,7 +423,9 @@ bool Fsr4Upscaler::Fatal() const noexcept {
 }
 
 bool Fsr4Upscaler::NeedsEdgeFix() const noexcept {
-    return !impl->last_from_sdk;
+    // The SDK's output shows the same lines on the last rows and columns as the v07 model's
+    // (seen on an RX 7900 XT with FSR 4.1.2): the edge fix runs for both.
+    return true;
 }
 
 } // namespace Vulkan
