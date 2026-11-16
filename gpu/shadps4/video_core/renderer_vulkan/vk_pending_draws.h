@@ -41,6 +41,7 @@ public:
         min_width = static_cast<std::uint32_t>(Env("GOW3_PENDING_MIN_WIDTH", 640));
         drop_depth = Env("GOW3_PENDING_DROP_DEPTH", 0) != 0;
         widest_any = Env("GOW3_PENDING_WIDEST_ANY", 0) != 0;
+        relive = Env("GOW3_PENDING_RELIVE", 1) != 0;
     }
 
     /// Records a draw into `target` (color or depth address, `width` pixels) during `frame`.
@@ -63,7 +64,10 @@ public:
         if (color && (depth || widest_any)) {
             const std::uint64_t window = frame / 32;
             if (window != widest_window) {
-                prev_widest = window == widest_window + 1 ? cur_widest : 0;
+                // After a gap (loading) the last width stays for one window: the first scene
+                // draws of a new level may be half-resolution ones, which must not pass for the
+                // scene width (and drop) before the G-buffer is drawn.
+                prev_widest = window == widest_window + 1 ? cur_widest : widest;
                 cur_widest = 0;
                 widest_window = window;
             }
@@ -75,6 +79,7 @@ public:
             return;
         }
         s.streak = s.streak && frame > s.last && frame - s.last <= 2 ? s.streak + 1 : 1;
+        s.best = s.streak > s.best ? s.streak : s.best;
         s.last = frame;
         if (seen.size() > 4096) {  // targets come and go with levels: forget the stale ones
             for (auto it = seen.begin(); it != seen.end();) {
@@ -92,7 +97,13 @@ public:
             return false;
         }
         const auto it = seen.find(target);
-        return it != seen.end() && it->second.streak >= streak_needed;
+        // gow3: a target that was live for a while before (the scene's G-buffer and lighting)
+        // counts as live again from its first frame after a gap. A level load pauses the scene
+        // for longer than 2 flips, and the new level's first frames then waited for every new
+        // shader: "176 waits for a compile (4623 ms in all, worst 480 ms)", a 3.4 s freeze
+        // ("drawn 3 frames in a row"). GOW3_PENDING_RELIVE=0 restores the 12-frame wait.
+        return it != seen.end() && (it->second.streak >= streak_needed ||
+                                    (relive && it->second.best >= relive_after));
     }
 
     /// Statistics for the log line (Report).
@@ -156,9 +167,12 @@ public:
 
 private:
     bool widest_any = false;
+    bool relive = true;
+    static constexpr std::uint32_t relive_after = 300; // live ~2+ s before the gap
     struct Seen {
         std::uint64_t last = 0;
         std::uint32_t streak = 0;
+        std::uint32_t best = 0; // longest streak so far
     };
     struct Drops {
         std::uint32_t count = 0, width = 0;
