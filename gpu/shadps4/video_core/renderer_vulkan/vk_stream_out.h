@@ -13,7 +13,8 @@
 // (bound in the buffer cache's arenas at the V# base), and four counters in a small buffer play
 // the offsets: Vulkan keeps the byte offset of the next vertex there, as the VGT keeps its
 // offset, and a primitive that does not fit is dropped as on the VGT. GOW3_STREAMOUT=0: off
-// (such draws are skipped as before and the device is made without the extension).
+// (such draws are skipped as before and the device is made without the extension); on by
+// default since the captures are copied back to guest memory for the CPU (StreamOutWriteback).
 #pragma once
 
 #include <array>
@@ -48,23 +49,24 @@ class Instance;
 class Runtime;
 class Scheduler;
 
-/// GOW3_STREAMOUT, read once: default off, 1 turns the capture on.
+/// GOW3_STREAMOUT, read once: default on, 0 turns the capture off.
 ///
-/// gow3: the capture works (the device loss it caused on AMD was a pipeline-cache defect, fixed
-/// in vk_pipeline_serialization.cpp), but the meshes it feeds back are drawn wrong: thin dashed
-/// slivers along triangle edges, magenta on the ground and white on crates, where the original
-/// port draws nothing at all. Skipping those draws is the better picture until that is found.
+/// gow3: Killzone clips the geometry around a bullet impact on the GPU (its one stream-out
+/// pipeline) and its CPU reads the triangles back to build the decal (image+0x3aeda0). Without
+/// the capture the port drew no impact decals; with the capture but without the copy back to
+/// guest memory (StreamOutWriteback) the CPU read old data and the decals came out as thin
+/// slivers along triangle edges, magenta on the ground and white on crates.
 inline bool StreamOutWanted() {
     static const bool wanted = [] {
         const char* env = std::getenv("GOW3_STREAMOUT");
-        return env && env[0] == '1';
+        return !(env && env[0] == '0');
     }();
     return wanted;
 }
 
-/// GOW3_STREAMOUT_WRITEBACK, read once: default on (with GOW3_STREAMOUT=1), 0 turns it off.
-/// gow3: the game sets every buffer offset itself and never reads the filled size back, so its
-/// CPU knows how much each capture holds and presumably reads the results. The port's default
+/// GOW3_STREAMOUT_WRITEBACK, read once: default on, 0 turns it off (diagnostics only).
+/// gow3: the game sets every buffer offset itself and never reads the filled size back: its
+/// CPU reads the results (GOW3_STREAMOUT_DIAG=1 caught the reads). The port's default
 /// readback mode (Relaxed) never returns GPU-written buffers to guest memory unless the CPU
 /// writes the same page, so after each capture its range is copied back once the GPU is done.
 inline bool StreamOutWriteback() {

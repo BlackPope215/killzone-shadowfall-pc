@@ -17,6 +17,18 @@ have an environment switch that restores the old behaviour.
   `S_WQM_B64` grows masks to whole quads (pixel and compute shaders); Wave64 absent-lane reads
   folded on 64-lane hosts.
 
+- **Bullet-impact decals (stream-out), on all GPUs:** the game's one stream-out pipeline
+  (copy shader `80558465`) clips the geometry around a hit on the GPU, and the game's CPU reads
+  the triangles back to build the decal (`image+0x3aeda0`, found with a guard page on the buffer,
+  `GOW3_STREAMOUT_DIAG=1`). It sets every buffer offset itself and never uses the filled size.
+  The port skipped these draws (no impact decals at all), and with the capture on
+  (`GOW3_STREAMOUT=1`) the CPU still read old memory, because the default Relaxed readback mode
+  never returns GPU-written buffers: thin slivers, magenta on the ground, white on crates. The
+  precise readback mode for the whole memory (`GOW3_READBACKS=2`) stops the game during loading.
+  Each capture is now copied back to guest memory once the GPU is done, through an 8 MiB ring of
+  its own and only from the offset the game set (`vk_stream_out.cpp`). Stream-out is on by default
+  (`GOW3_STREAMOUT=0` off, `GOW3_STREAMOUT_WRITEBACK=0` without the copy back).
+
 ## Shader-compile stutter
 
 The port drops a pending draw (its pipeline still compiling) only for "live", full-resolution
@@ -78,6 +90,9 @@ Colossus port (subgroup sizes, absent lanes, refused pipelines) and The Order 18
 
 ## Diagnostics added (off by default)
 
+- `GOW3_STREAMOUT_DIAG=1` with the capture on: the capture ranges, the draws that read them, and
+  every 10 s the CPU code that read them (guard page: instruction, code bytes, registers) and
+  their contents.
 - `GOW3_DIAG_IMAGES=2`: per pass of a captured frame, NaN / infinite / negative / magenta pixel
   counts of each target. `=3` with `GOW3_DIAG_ADDR`: one target after every draw.
 - Long compile waits log the scene width and whether skipping is off; the 5 s "Shaders:" line
