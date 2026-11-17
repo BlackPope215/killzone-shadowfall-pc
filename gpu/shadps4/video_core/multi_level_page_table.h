@@ -68,7 +68,9 @@ public:
 
 private:
     std::vector<L1Page*> first_level_map{};
-    Common::ObjectPool<L1Page> page_alloc;
+    // gow3 (from SpartanPort 4763068): grow by a few page tables; the default chunk of 1024
+    // committed ~90 MiB for the texture cache's few.
+    Common::ObjectPool<L1Page> page_alloc{8};
 };
 
 } // namespace VideoCore

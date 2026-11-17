@@ -383,7 +383,38 @@ struct PageManager::Impl {
         release_pending();
     }
 
-    std::array<PageState, NUM_ADDRESS_PAGES> cached_pages{};
+    // gow3 (from SpartanPort 4763068 / tlou-remastered-pc 08bb8ea): watcher counts allocated per
+    // lock region on first use. The whole 40-bit address space as one array was 512 MiB, zeroed
+    // at startup, for a game that tracks a few GiB of it. Every access here holds the region's
+    // lock; the compare-exchange only guards two regions' first uses racing for one slot.
+    class PageStates {
+    public:
+        PageStates() = default;
+        PageStates(const PageStates&) = delete;
+        PageStates& operator=(const PageStates&) = delete;
+        ~PageStates() {
+            for (auto& slot : chunks) {
+                delete[] slot.load(std::memory_order_relaxed);
+            }
+        }
+        PageState& operator[](size_t page) {
+            std::atomic<PageState*>& slot = chunks[page / PAGES_PER_LOCK];
+            PageState* chunk = slot.load(std::memory_order_acquire);
+            if (!chunk) [[unlikely]] {
+                PageState* fresh = new PageState[PAGES_PER_LOCK]{};
+                if (slot.compare_exchange_strong(chunk, fresh, std::memory_order_acq_rel)) {
+                    chunk = fresh;
+                } else {
+                    delete[] fresh;
+                }
+            }
+            return chunk[page % PAGES_PER_LOCK];
+        }
+
+    private:
+        std::array<std::atomic<PageState*>, NUM_ADDRESS_LOCKS> chunks{};
+    };
+    PageStates cached_pages;
 #ifdef PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP
     using LockType = Common::AdaptiveMutex;
 #else
