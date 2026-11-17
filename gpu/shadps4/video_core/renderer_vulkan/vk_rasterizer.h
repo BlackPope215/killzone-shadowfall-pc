@@ -147,11 +147,11 @@ public:
     void NotePendingGpuRead(VAddr address, u64 size);
     bool PendingReadOverlaps(VAddr address, u64 size);
     static bool CeDumpCheck();
-    /// Before a guest-visible write: fences deferred earlier are written first.
     /// gow3: GOW3_SUBMIT_EVERY: submit every N draws on the recording thread (vk_rasterizer.cpp).
     void SubmitEarly();
     static inline std::atomic<u64> early_submits{0};
 
+    /// Before a guest-visible write: fences deferred earlier are written first.
     void WaitDeferredSignals() {
         scheduler.WaitDeferredSignals();
     }

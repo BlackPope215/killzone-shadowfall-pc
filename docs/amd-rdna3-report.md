@@ -42,6 +42,16 @@ thread waiting 24% -> 5%. Every 200 draws was slower again.
 A PGO build (`GOW3_PGO=generate`, play ~5 min, `GOW3_PGO=use`) gave a further +8% (slowest
 frames +17%) on the same view.
 
+"Unlimited" (no frame limit, uncapped 480 Hz vblank) presented each flip only on the next vblank
+tick, and the game waits for its flips: it ran slower than a 144 limit (119 against 142 FPS).
+It presents flips as they come now (+11% on the same settings; `GOW3_UNLIMITED_ON_VBLANK=1`
+restores the old pacing). Frames queued 2 (`GOW3_FRAMES_AHEAD`) gave +6% at worse slowest
+frames and one more frame of latency: 1 stays the default.
+
+The GPU profiler (`GOW3_GPU_PROFILE=1`) works again (it gave a black screen in game; its
+timestamps no longer end the render pass, and its results are read without waiting). On the
+7900 XT FSR 4.1.2 takes ~1.8 ms a frame at 2560x1440; the game's own passes are each under 0.2 ms.
+
 ## Shader-compile stutter
 
 The port drops a pending draw (its pipeline still compiling) only for "live", full-resolution

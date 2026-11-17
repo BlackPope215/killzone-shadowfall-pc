@@ -358,6 +358,7 @@ void StreamOut::Finish(const XfbDraw& draw) {
         // The captured range back to guest memory once the GPU has written it (as the deferred
         // image readbacks do): the CPU reads what the GPU wrote, not what the page held before.
         auto& scheduler = runtime.GetScheduler();
+        bool copied = false;
         for (u32 i = 0; i < num_written; ++i) {
             const auto& w = written[i];
             // What this capture can have written: from the offset the game set to the end.
@@ -372,6 +373,7 @@ void StreamOut::Finish(const XfbDraw& draw) {
             readback_head = (readback_head + size + 255) & ~u64{255};
             const vk::BufferCopy copy{w.offset + w.start, at, size};
             runtime.CopyBuffer(w.buffer, readback.get(), {&copy, 1});
+            copied = true;
             scheduler.DeferPriorityOperation(
                 [this, guest = w.guest + w.start, buffer = readback.get(), at, size] {
                     buffer->Invalidate(at, size);
@@ -383,6 +385,18 @@ void StreamOut::Finish(const XfbDraw& draw) {
                             "(GOW3_STREAMOUT_WRITEBACK=0: off)\n");
                 std::fflush(stdout);
             }
+        }
+        if (copied) {
+            // The host reads the ring once the GPU is done: the copies made visible to it.
+            scheduler.Record([](vk::CommandBuffer cmdbuf) {
+                const vk::MemoryBarrier2 to_host{
+                    .srcStageMask = vk::PipelineStageFlagBits2::eCopy,
+                    .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eHost,
+                    .dstAccessMask = vk::AccessFlagBits2::eHostRead,
+                };
+                cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &to_host});
+            });
         }
     }
     num_written = 0;
