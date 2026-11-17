@@ -1693,7 +1693,7 @@ void Rasterizer::DiagPassBoundary(bool force) {
     diag_addresses = force ? std::array<VAddr, 8>{} : addresses;
 }
 
-/// gow3: GOW3_SUBMIT_EVERY=<draws> (default 0: off). The port submits to the GPU only when the
+/// gow3: GOW3_SUBMIT_EVERY=<draws> (default 400; 0: off). The port submits to the GPU only when the
 /// game's command buffers end (once or twice a frame), so the GPU starts a frame of ~2500 draws
 /// only after all of it was decoded and recorded, and the game waits for that frame to finish
 /// before it goes on: recording and GPU work did not overlap (GPU ~62% busy, CPU-bound). With
@@ -1702,7 +1702,9 @@ void Rasterizer::DiagPassBoundary(bool force) {
 void Rasterizer::SubmitEarly() {
     static const u32 every = [] {
         const char* env = std::getenv("GOW3_SUBMIT_EVERY");
-        const u32 n = env ? static_cast<u32>(std::strtoul(env, nullptr, 10)) : 0;
+        // Measured on a 2400-2800 draw scene (7900 XT, PGO build): every 400 draws +15% FPS x
+        // draws and +26% on the slowest frames; every 200 lost it again (submit overhead).
+        const u32 n = env && env[0] ? static_cast<u32>(std::strtoul(env, nullptr, 10)) : 400;
         if (n) {
             std::printf("GPU: the draw recording thread submits every %u draws "
                         "(GOW3_SUBMIT_EVERY)\n", n);

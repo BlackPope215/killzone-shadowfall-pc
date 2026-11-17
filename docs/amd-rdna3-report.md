@@ -29,6 +29,19 @@ have an environment switch that restores the old behaviour.
   its own and only from the offset the game set (`vk_stream_out.cpp`). Stream-out is on by default
   (`GOW3_STREAMOUT=0` off, `GOW3_STREAMOUT_WRITEBACK=0` without the copy back).
 
+## CPU-bound scenes (2400-3100 draws a frame)
+
+Profiled with the port's sampler (`GOW3_PROFILE`): the GPU command thread, the draw recording
+thread and the Vulkan recording thread each ran near a full core while the GPU was ~62% busy.
+The port submitted to the GPU only where the game's command buffers end (~2.5 times a frame),
+so the GPU began a frame only after it was all decoded and recorded, and the game waits for each
+frame to finish. The draw recording thread now submits every 400 draws (`GOW3_SUBMIT_EVERY`,
+0: off). Same checkpoint: 333k -> 382k FPS x draws (+15%), slowest frames +26%, the GPU command
+thread waiting 24% -> 5%. Every 200 draws was slower again.
+
+A PGO build (`GOW3_PGO=generate`, play ~5 min, `GOW3_PGO=use`) gave a further +8% (slowest
+frames +17%) on the same view.
+
 ## Shader-compile stutter
 
 The port drops a pending draw (its pipeline still compiling) only for "live", full-resolution
