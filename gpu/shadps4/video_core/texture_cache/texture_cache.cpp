@@ -2040,26 +2040,19 @@ void TextureCache::GarbageCollectImages() {
         if (num_deletions == 0) {
             return true;
         }
-        --num_deletions;
         auto& image = slot_images[image_id];
         ResolveReadbacks(image.info.guest_address, image.info.guest_size, true,
                          ReadbackSource::CacheCleanup);
         const bool download = image.SafeToDownload();
-        const bool tiled = image.info.IsTiled();
-        if (tiled && download) {
-            // This is a workaround for now. We can't handle non-linear image downloads.
-            return false;
-        }
-        if (download && !pressured) {
-            return false;
-        }
         if (download) {
-            // gow3: synchronously, while the image still protects its pages. A deferred
-            // write-back landed after FreeImage had unprotected them, over whatever the game
-            // had meanwhile stored there (e.g. its heap after unloading an area).
-            DownloadImageMemory(image_id, true);
-            ++gc_downloads;
+            // GPU-written images are kept and moved behind the evictable entries (SpartanPort
+            // #1374). Writing a linear one back before evicting it corrupted textures under
+            // memory pressure there, and its scheduler.Finish() stalled the frame.
+            lru_cache.Touch(image.lru_id, gc_tick);
+            return false;
         }
+        // Only actual evictions spend the deletion budget.
+        --num_deletions;
         ++gc_evictions;
         FreeImage(image_id);
         if (total_used_memory < critical_gc_memory) {
@@ -2086,17 +2079,17 @@ void TextureCache::GarbageCollectImages() {
         lru_cache.ForEachItemBelow(gc_tick - ticks_to_destroy, clean_up);
     }
     // gow3: evictions under memory pressure, at most every 5 s (GOW3_FRAME_STATS or not).
-    if (pressured || gc_downloads != 0) {
+    if (pressured) {
         const auto now = std::chrono::steady_clock::now();
         if (now - gc_report_time >= std::chrono::seconds(5)) {
             std::printf("Texture cache: memory pressure, %llu of %llu MiB (critical %llu): "
-                        "%llu images evicted, %llu written back since the last report\n",
+                        "%llu images evicted since the last report\n",
                         (unsigned long long)(total_used_memory >> 20),
                         (unsigned long long)(pressure_gc_memory >> 20),
                         (unsigned long long)(critical_gc_memory >> 20),
-                        (unsigned long long)gc_evictions, (unsigned long long)gc_downloads);
+                        (unsigned long long)gc_evictions);
             gc_report_time = now;
-            gc_evictions = gc_downloads = 0;
+            gc_evictions = 0;
         }
     }
 }
