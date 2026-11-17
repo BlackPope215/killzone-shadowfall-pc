@@ -800,13 +800,26 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 
     // gow3: with a frame limit (uncapped presets) a queued flip is presented as soon as it
     // arrives and its slot allows, between vblanks, instead of on the next vblank tick.
-    bool immediate_flips = frame_limit != 0;
+    // "Unlimited" (limit 0 with the uncapped 480 Hz vblank) did not: each flip waited for the
+    // next tick, and the game waits for its flips (display buffers), so it ran slower than a
+    // 144 limit (119 against 142 FPS on the same scene, RX 7900 XT). Immediate there too; the
+    // classic 60 Hz vblank pacing (no limit, vblank at 60 Hz) is unchanged.
+    // GOW3_UNLIMITED_ON_VBLANK=1: unlimited flips on vblank ticks again.
+    static const bool unlimited_on_vblank = [] {
+        const char* env = std::getenv("GOW3_UNLIMITED_ON_VBLANK");
+        return env && env[0] == '1';
+    }();
+    const auto immediate_for = [&](u32 limit) {
+        return limit != 0 ||
+               (!unlimited_on_vblank && EmulatorSettings.GetVblankFrequency() > 240);
+    };
+    bool immediate_flips = immediate_for(frame_limit);
 
     while (!token.stop_requested()) {
         if (const u32 limit = current_limit(); limit != frame_limit) {
             frame_limit = limit;
             frame_period = limit ? std::chrono::nanoseconds(1000000000 / limit) : std::chrono::nanoseconds(0);
-            immediate_flips = limit != 0;
+            immediate_flips = immediate_for(limit);
             next_flip = std::chrono::steady_clock::now();
             std::printf("VideoOut: frame limit %u FPS\n", limit);
         }
