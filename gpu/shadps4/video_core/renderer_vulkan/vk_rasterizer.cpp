@@ -1540,11 +1540,12 @@ void Rasterizer::PrintPipeStats() {
     const double cycles = double(tsc - last_tsc);
     const u64 busy = draw_pipe->busy_cycles.load(std::memory_order_relaxed);
     std::printf("Draw pipe: %.0f draws/s pipelined, %.0f drains/s that waited, stage A waited "
-                "%.1f%%, stage B busy %.1f%%\n",
+                "%.1f%%, stage B busy %.1f%%, %.0f early submits/s\n",
                 (draw_pipe->packets - last_packets) / seconds,
                 (draw_pipe->drains - last_drains) / seconds,
                 100.0 * (draw_pipe->drain_cycles - last_drain_cycles) / cycles,
-                100.0 * (busy - last_busy) / cycles);
+                100.0 * (busy - last_busy) / cycles,
+                early_submits.exchange(0, std::memory_order_relaxed) / seconds);
     std::printf("  drains by reason/s:");
     for (u32 r = 0; r < DrawPipe::NumReasons; ++r) {
         if (const u64 n = draw_pipe->drains_by_reason[r]) {
@@ -1692,11 +1693,49 @@ void Rasterizer::DiagPassBoundary(bool force) {
     diag_addresses = force ? std::array<VAddr, 8>{} : addresses;
 }
 
+/// gow3: GOW3_SUBMIT_EVERY=<draws> (default 0: off). The port submits to the GPU only when the
+/// game's command buffers end (once or twice a frame), so the GPU starts a frame of ~2500 draws
+/// only after all of it was decoded and recorded, and the game waits for that frame to finish
+/// before it goes on: recording and GPU work did not overlap (GPU ~62% busy, CPU-bound). With
+/// this, the recording thread submits what it has every N draws, before it records the next
+/// draw (nothing of that draw is in the old command buffer yet).
+void Rasterizer::SubmitEarly() {
+    static const u32 every = [] {
+        const char* env = std::getenv("GOW3_SUBMIT_EVERY");
+        const u32 n = env ? static_cast<u32>(std::strtoul(env, nullptr, 10)) : 0;
+        if (n) {
+            std::printf("GPU: the draw recording thread submits every %u draws "
+                        "(GOW3_SUBMIT_EVERY)\n", n);
+            std::fflush(stdout);
+        }
+        return n;
+    }();
+    if (!every || FrameCapture::Active()) {
+        return;
+    }
+    static u64 tick_seen = 0;
+    static u32 draws = 0;
+    const u64 tick = scheduler.CurrentTick();
+    if (tick != tick_seen) {
+        // Submitted since (the game's own submissions): count from there.
+        tick_seen = tick;
+        draws = 0;
+    }
+    if (++draws < every) {
+        return;
+    }
+    scheduler.Flush();
+    early_submits.fetch_add(1, std::memory_order_relaxed);
+    tick_seen = scheduler.CurrentTick();
+    draws = 0;
+}
+
 void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw* used_prepared,
                             bool is_indexed, u32 index_offset) {
     if (DrawPipe::OnStageB()) {
         FrameCapture::Poll();
         scheduler.PopPendingOperations();
+        SubmitEarly();
     }
     DiagPassBoundary(false);
     const auto& regs = Regs();
