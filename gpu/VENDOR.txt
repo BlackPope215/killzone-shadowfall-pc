@@ -8,3 +8,22 @@ Backported from upstream after b4e7ae7 (2026-10-02), recompiler correctness fixe
   mode (#5126), e518a6515 S_SUBB_U32 SCC wrap (#5031), 282e5c792 S_ADDC_U32 SCC carry-out (#5030),
   fb6367d29 32-bit literals in the high dword of 64-bit floats (#5114), 94e217781 V_BFM_B32 (#5185),
   d1cb90dbb ADDC (#5200), dd43d1cac V_CVT_PK_U8_F32 (#5194), ef08b1e1f V_ALIGNBIT/ALIGNBYTE (#5186).
+Backported 2026-11-18 from upstream main (7c0b846), shader recompiler:
+  caeb240 Flat VUID (#5145), e0cd957 SampleId on the KHR barycentric path (#5131), 282f644
+  V_MIN_F64 (#5125), 53af37a V_TRUNC_F64 (#5127), 259e815 thread id add patching (#5199),
+  d9cf41b InverseBallot folding (#5202), 5ae2caf 1D OpImageTexelPointer (#5203), b08fd9b fp64
+  detection (#5342), 3a9f572 IMAGE_GATHER4_C_L (#5344), ab1dd38 undefined 64-bit ints (#5366),
+  603cff4 phi dedup order (#5364), 78bedfa CFG fallthrough edges (#5365), a808e76 S_SLEEP (#5445),
+  524be7c GetUserData out of phi folding (#5427), 6752d8b buffer cache invalidation instructions
+  (#5447), c1b2655 coarse derivatives (#5468), de27898 GS EmitCut (#5487), b2ad718 FindILsb64
+  (#5622), 6999be1 m_instruction dst (#5535), 0951d80 F32x2 in SSA (#5620), abe42da V_LSHR_B64
+  (#5723), f3687cc S_BFM_B64 (#5724), 312cfba 64-bit scalar shift amount (#5725), 1f1f4c6
+  V_CVT_F32_UBYTE VOP3 types (#5719, format table only).
+Video core: 7ea677e packet size read before running it (#5541), 9ac8b23 CLEAR_STATE defaults
+  (#5668), c64a1e0 CE Type 2 / Rewind packets (#5486), c679ce6 depth-overlap subresources
+  (#5229), fecfbed no color images as stencil (#5118).
+Already in this tree (Common::Backports or earlier): c34ca21, 1c2b8f9, #5257, #5258, #5262,
+  #5348, #5264 (off). Not taken: changes this tree replaced (pipeline, buffer and texture cache
+  reworks, submit every N draws, stream-out), structural recompiler passes (4c7b287, 3f21ee0,
+  945dbc3, 4788f0b) and the NaN min/max rework (f048bb7; a similar change was reverted here).
+

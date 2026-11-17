@@ -19,6 +19,10 @@ void Translator::EmitFlowControl(const GcnInst& inst) {
     case Opcode::S_TRAP:
         LOG_WARNING(Render_Vulkan, "S_TRAP instruction!");
         return;
+    case Opcode::S_SLEEP:
+        LOG_WARNING(Render_Vulkan,
+                    "S_SLEEP instruction ignored (wave scheduling delay is not emulated).");
+        return;
     case Opcode::S_GETPC_B64:
         return S_GETPC_B64(inst);
     case Opcode::S_SETPC_B64:
@@ -63,6 +67,10 @@ void Translator::S_SENDMSG(const GcnInst& inst) {
             break;
         case SendMsgSimm::GsOp::Emit:
             ir.EmitVertex();
+            break;
+        case SendMsgSimm::GsOp::EmitCut:
+            ir.EmitVertex();
+            ir.EmitPrimitive();
             break;
         default:
             UNREACHABLE();

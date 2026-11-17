@@ -106,9 +106,11 @@ public:
     void S_LSHL_B32(const GcnInst& inst);
     void S_LSHL_B64(const GcnInst& inst);
     void S_LSHR_B32(const GcnInst& inst);
+    void S_LSHR_B64(const GcnInst& inst);
     void S_ASHR_I32(const GcnInst& inst);
     void S_ASHR_I64(const GcnInst& inst);
     void S_BFM_B32(const GcnInst& inst);
+    void S_BFM_B64(const GcnInst& inst);
     void S_MUL_I32(const GcnInst& inst);
     void S_BFE(const GcnInst& inst, bool is_signed);
     void S_BFE_I32(const GcnInst& inst);
@@ -218,6 +220,7 @@ public:
     void V_CVT_F32_F64(const GcnInst& inst);
     void V_CVT_F64_F32(const GcnInst& inst);
     void V_CVT_F32_UBYTE(u32 index, const GcnInst& inst);
+    void V_TRUNC_F64(const GcnInst& inst);
     void V_FLOOR_F64(const GcnInst& inst);
     void V_FRACT_F32(const GcnInst& inst);
     void V_TRUNC_F32(const GcnInst& inst);
@@ -288,6 +291,7 @@ public:
     void V_ALIGNBIT_B32(const GcnInst& inst);
     void V_ALIGNBYTE_B32(const GcnInst& inst);
     void V_MUL_F64(const GcnInst& inst);
+    void V_MIN_F64(const GcnInst& inst);
     void V_MAX_F64(const GcnInst& inst);
     void V_MUL_LO_U32(const GcnInst& inst);
     void V_MUL_HI_U32(bool is_signed, const GcnInst& inst);
