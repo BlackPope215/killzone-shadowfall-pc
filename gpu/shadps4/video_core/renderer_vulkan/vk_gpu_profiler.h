@@ -8,6 +8,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <string>
 #include <unordered_map>
@@ -73,6 +74,15 @@ private:
     std::array<std::vector<u64>, NumSlices> keys; ///< label of each timestamp but the last
     std::array<u32, NumSlices> used{};
     std::array<bool, NumSlices> pending{};
+    u64 dropped = 0; ///< frames whose timestamps were not all written when read (not waited)
+    /// GOW3_GPU_PROFILE_SPLIT=1: end the render pass before a timestamp (radv), as before.
+    static bool SplitPasses() {
+        static const bool split = [] {
+            const char* env = std::getenv("GOW3_GPU_PROFILE_SPLIT");
+            return env && env[0] == '1';
+        }();
+        return split;
+    }
     std::unordered_map<u64, std::string> described;
     struct Total {
         double ms = 0;
