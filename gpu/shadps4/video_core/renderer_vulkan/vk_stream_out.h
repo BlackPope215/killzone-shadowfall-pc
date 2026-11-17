@@ -62,6 +62,19 @@ inline bool StreamOutWanted() {
     return wanted;
 }
 
+/// GOW3_STREAMOUT_WRITEBACK, read once: default on (with GOW3_STREAMOUT=1), 0 turns it off.
+/// gow3: the game sets every buffer offset itself and never reads the filled size back, so its
+/// CPU knows how much each capture holds and presumably reads the results. The port's default
+/// readback mode (Relaxed) never returns GPU-written buffers to guest memory unless the CPU
+/// writes the same page, so after each capture its range is copied back once the GPU is done.
+inline bool StreamOutWriteback() {
+    static const bool wanted = [] {
+        const char* env = std::getenv("GOW3_STREAMOUT_WRITEBACK");
+        return !(env && env[0] == '0');
+    }();
+    return wanted;
+}
+
 /// The stream-out configurations emulated: stream 0 only, rasterizing stream 0 (Killzone's one
 /// stream-out pipeline: VGT_STRMOUT_CONFIG 0x1). Others are skipped as before.
 inline bool StreamOutHandled(const AmdGpu::Regs& regs) {
@@ -133,6 +146,7 @@ private:
     std::unique_ptr<VideoCore::Buffer> counters; ///< four u32 byte offsets (Vulkan's counters)
     std::unordered_map<u64, Layout> layouts;     ///< by copy shader hash
     struct Written {
+        VAddr guest;
         const VideoCore::Buffer* buffer;
         u64 offset;
         u64 size;
@@ -141,6 +155,7 @@ private:
     u32 num_written = 0;
     u64 draws = 0;
     u64 updates = 0;
+    u64 writebacks = 0;
     bool logged_unresolved = false;
     bool logged_past_end = false;
     /// gow3: the offset the game last set from a packet, in bytes (-1: left by a capture).

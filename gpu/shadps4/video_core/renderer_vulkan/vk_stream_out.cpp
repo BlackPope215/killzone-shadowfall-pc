@@ -2,6 +2,7 @@
 // gow3 (Killzone): GCN stream-out through VK_EXT_transform_feedback (see vk_stream_out.h).
 
 #include <algorithm>
+#include <bit>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -16,6 +17,8 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
+#include "video_core/renderer_vulkan/vk_streamout_diag.h"
 #include "video_core/texture_cache/texture_cache.h"
 
 namespace Vulkan {
@@ -319,7 +322,11 @@ XfbDraw StreamOut::Prepare(const AmdGpu::Regs& regs, bool& needs_barrier) {
         draw.counters[b] = counters->Handle();
         draw.counter_offsets[b] = b * sizeof(u32);
         draw.num_counters = b + 1;
-        written[num_written++] = {buffer, offset, sizes[b]};
+        written[num_written++] = {*bases[b], buffer, offset, sizes[b]};
+        if (StreamoutDiag::On()) {
+            StreamoutDiag::Captured(*bases[b], *bases[b] + sizes[b],
+                                    AmdGpu::GetParams(regs.vs_program).hash);
+        }
     }
     needs_barrier |= runtime.IsBufferAccessed(counters.get(), 0, CounterBytes, true);
     draw.active = draw.num_counters != 0;
@@ -340,6 +347,28 @@ void StreamOut::Finish(const XfbDraw& draw) {
         runtime.AccessBuffer(written[i].buffer, written[i].offset, written[i].size,
                              vk::PipelineStageFlagBits2::eTransformFeedbackEXT,
                              vk::AccessFlagBits2::eTransformFeedbackWriteEXT);
+    }
+    if (StreamOutWriteback()) {
+        // The captured range back to guest memory once the GPU has written it (as the deferred
+        // image readbacks do): the CPU reads what the GPU wrote, not what the page held before.
+        auto& pool = runtime.GetStagingPool();
+        auto& scheduler = runtime.GetScheduler();
+        for (u32 i = 0; i < num_written; ++i) {
+            const auto& w = written[i];
+            const auto download = pool.Request(w.size, VideoCore::MemoryType::HostCached, 16);
+            const vk::BufferCopy copy{w.offset, download.offset, w.size};
+            runtime.CopyBuffer(w.buffer, download.buffer, {&copy, 1});
+            scheduler.DeferPriorityOperation([this, guest = w.guest, download, size = w.size] {
+                download.Invalidate();
+                memory->TryWriteBacking(std::bit_cast<u8*>(guest), download.mapped, size);
+                runtime.GetStagingPool().FreeDeferred(download);
+            });
+            if (++writebacks == 1) {
+                std::printf("Stream-out: captures are copied back to guest memory "
+                            "(GOW3_STREAMOUT_WRITEBACK=0: off)\n");
+                std::fflush(stdout);
+            }
+        }
     }
     num_written = 0;
     // Read at the start of the capture, written at its end. MEMORY_WRITE: the barrier tracker

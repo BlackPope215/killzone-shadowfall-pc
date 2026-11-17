@@ -184,6 +184,57 @@ inline void Describe(const AmdGpu::Regs& regs) {
     std::fflush(stdout);
 }
 
+/// GOW3_STREAMOUT=1: a capture into guest range [begin, end) was recorded. Registers the range
+/// for CheckRead (which later draws read it), watches CPU accesses to it (guard page, re-armed
+/// at every capture) and every 10 s reports the captures, those accesses and what guest memory
+/// holds at the start of the first range.
+inline void Captured(VAddr begin, VAddr end, u64 copy_shader) {
+    if (!On()) {
+        return;
+    }
+    std::scoped_lock lock{Mutex()};
+    static u64 captures = 0;
+    static auto window = std::chrono::steady_clock::now();
+    ++captures;
+    bool known = false;
+    for (const auto& r : Ranges()) {
+        known |= r.begin == begin && r.end == end;
+    }
+    if (!known && Ranges().size() < 64) {
+        Ranges().push_back({begin, end, 0, copy_shader});
+        if (Ranges().size() <= 8) {
+            std::printf("GPU: stream-out capture range %llx..%llx (%llu bytes)\n",
+                        static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end),
+                        static_cast<unsigned long long>(end - begin));
+        }
+    }
+    VAddr& wb = WatchBegin();
+    VAddr& we = WatchEnd();
+    const VAddr nb = wb ? std::min(wb, begin) : begin;
+    const VAddr ne = std::max(we, end);
+    if (ne - nb <= 256 * 1024) {
+        wb = nb;
+        we = ne;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now - window >= std::chrono::seconds(10)) {
+        std::printf("GPU: stream-out: %.1f captures per second, watched %llx..%llx\n",
+                    double(captures) / std::chrono::duration<double>(now - window).count(),
+                    static_cast<unsigned long long>(wb), static_cast<unsigned long long>(we));
+        if (Core::Memory::Instance()->IsValidGpuMapping(wb, 32)) {
+            const auto* f = reinterpret_cast<const float*>(wb);
+            const auto* u = reinterpret_cast<const u32*>(wb);
+            std::printf("  guest memory at %llx: (%g %g %g %08x) (%g %g %g %08x)\n",
+                        static_cast<unsigned long long>(wb), f[0], f[1], f[2], u[3], f[4], f[5],
+                        f[6], u[7]);
+        }
+        WatchReport();
+        captures = 0;
+        window = now;
+    }
+    WatchArm(wb, we);
+}
+
 /// A buffer bound by a later draw: reported once per shader pair when it overlaps a buffer a
 /// copy shader loaded.
 inline void CheckRead(VAddr address, u64 size, u64 shader_hash, u64 stage, const char* what) {
