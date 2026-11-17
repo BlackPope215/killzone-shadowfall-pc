@@ -1515,9 +1515,6 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
     size_t acb_size = acb.size_bytes();
     while (!acb.empty()) {
         ProcessCommands();
-        if (rasterizer) {
-            rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonCompute); // gow3: compute work uses the caches
-        }
 
         auto* header = reinterpret_cast<const PM4Header*>(acb.data());
         u32 next_dw_off = header->type3.NumWords() + 1;
@@ -1559,6 +1556,32 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
 
         const PM4ItOpcode opcode = header->type3.opcode;
+
+        // gow3: compute work uses the caches, so the draw pipe is drained first, but only before
+        // packets that touch memory, the caches or graphics registers (as tlg_pc 2170d5e):
+        // padding, nested buffers (drained per packet inside), cache hints and compute program
+        // registers leave queued draws flowing. GOW3_COMPUTE_DRAIN=all: before every packet.
+        static const bool drain_all = [] {
+            const char* env = std::getenv("GOW3_COMPUTE_DRAIN");
+            return env && std::strcmp(env, "all") == 0;
+        }();
+        if (rasterizer) {
+            const bool cs_program_regs = [&] {
+                if (opcode != PM4ItOpcode::SetShReg) {
+                    return false;
+                }
+                const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
+                return set_data->reg_offset >= 0x200 &&
+                       set_data->reg_offset <= (0x200 + sizeof(ComputeProgram) / 4);
+            }();
+            const bool no_drain = opcode == PM4ItOpcode::Nop ||
+                                  opcode == PM4ItOpcode::IndirectBuffer ||
+                                  opcode == PM4ItOpcode::AcquireMem ||
+                                  opcode == PM4ItOpcode::SetQueueReg || cs_program_regs;
+            if (drain_all || !no_drain) {
+                rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonCompute);
+            }
+        }
 
         const auto* it_body = reinterpret_cast<const u32*>(header) + 1;
         switch (opcode) {
