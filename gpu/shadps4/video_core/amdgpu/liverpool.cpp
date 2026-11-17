@@ -1354,19 +1354,6 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 const u64* wait_addr = wait_reg_mem->Address<u64*>();
                 if (vo_port->IsVoLabel(wait_addr) &&
                     num_submits == mapped_queues[GfxQueueId].submits.size()) {
-                    // gow3: the game waits here once a frame for a display buffer to be free,
-                    // and it nearly always is already. Draining first made this thread wait
-                    // for the recording thread's whole queue anyway (17% of its time, 2300
-                    // draws a frame): the drain is only needed when the wait really blocks
-                    // (the flip that frees the buffer may still be queued there).
-                    // GOW3_VO_WAIT_DRAIN=1: drain always, as before.
-                    static const bool always_drain = [] {
-                        const char* env = std::getenv("GOW3_VO_WAIT_DRAIN");
-                        return env && env[0] == '1';
-                    }();
-                    if (!always_drain && wait_reg_mem->Test(regs.reg_array)) {
-                        break;
-                    }
                     if (rasterizer) {
                         rasterizer->DrainDrawPipe(static_cast<u32>(opcode));
                     }
