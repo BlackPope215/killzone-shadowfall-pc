@@ -91,8 +91,17 @@ void GpuProfiler::Collect(u32 which) {
         ++dropped;
         return;
     }
+    // gow3: timestamps of one frame span several submissions (GOW3_SUBMIT_EVERY): one recorded
+    // after a later one can read earlier (an unsigned difference of ~1e11 ms). Such a segment,
+    // or one over a second, is left out.
     for (u32 i = 0; i + 1 < count; ++i) {
+        if (stamps[i + 1] < stamps[i]) {
+            continue;
+        }
         const double ms = double(stamps[i + 1] - stamps[i]) * period_ns / 1e6;
+        if (ms > 1000.0) {
+            continue;
+        }
         auto& total = totals[keys[which][i]];
         total.ms += ms;
         ++total.segments;
