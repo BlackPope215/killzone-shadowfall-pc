@@ -229,6 +229,30 @@ bool PipelineBinaryCacheRequested() {
     const char* setting = std::getenv("GOW3_PIPELINE_BINARIES");
     return !setting || *setting != '0';
 }
+
+// The global key query, vkGetPipelineKeyKHR(device, nullptr, key), returns with callee-saved
+// registers changed on some NVIDIA drivers (rbx on 595.x for Linux, rdi on Windows; SpartanPort
+// #1352/#1367): a caller holding a pointer there crashed. The clobbers make this function save and
+// restore every Win64 callee-saved register around the call; noinline keeps that to this call.
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+[[gnu::noinline]] VkResult GetGlobalPipelineKeyKeepingRegisters(VkDevice device,
+                                                                VkPipelineBinaryKeyKHR* key) {
+    const VkResult result = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPipelineKeyKHR(device, nullptr, key);
+    asm volatile("" ::
+                     : "rbx", "rsi", "rdi", "r12", "r13", "r14", "r15", "xmm6", "xmm7", "xmm8",
+                       "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
+    return result;
+}
+#endif
+
+vk::Result GetGlobalPipelineKey(vk::Device device, vk::PipelineBinaryKeyKHR& key) {
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+    return vk::Result{GetGlobalPipelineKeyKeepingRegisters(
+        static_cast<VkDevice>(device), reinterpret_cast<VkPipelineBinaryKeyKHR*>(&key))};
+#else
+    return device.getPipelineKeyKHR(nullptr, &key);
+#endif
+}
 }
 
 bool InitializePipelineBinaryCache(vk::Device device, bool supported,
@@ -249,7 +273,7 @@ bool InitializePipelineBinaryCache(vk::Device device, bool supported,
         LOG_WARNING(Render_Vulkan, "Pipeline binary cache functions unavailable; using normal compilation");
         return false;
     }
-    const auto result = device.getPipelineKeyKHR(nullptr, &global_key);
+    const auto result = GetGlobalPipelineKey(device, global_key);
     if (result != vk::Result::eSuccess || !global_key.keySize ||
         global_key.keySize > VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR) {
         const auto key_size = global_key.keySize;
