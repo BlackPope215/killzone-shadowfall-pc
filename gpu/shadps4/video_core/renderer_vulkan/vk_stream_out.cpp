@@ -371,6 +371,19 @@ void StreamOut::Finish(const XfbDraw& draw) {
             }
             const u64 at = readback_head;
             readback_head = (readback_head + size + 255) & ~u64{255};
+            constexpr u64 PartBytes = ReadbackBytes / 8;
+            bool waited = false;
+            for (u64 part = at / PartBytes; part <= (at + size - 1) / PartBytes; ++part) {
+                const u64 tick = readback_ticks[part];
+                if (tick != 0 && !scheduler.IsFree(tick)) {
+                    scheduler.Wait(tick); // flushes first when the tick is the current one
+                    waited = true;
+                }
+                readback_ticks[part] = scheduler.CurrentTick();
+            }
+            if (waited) {
+                scheduler.PopPendingOperations(); // their write-backs read the bytes first
+            }
             const vk::BufferCopy copy{w.offset + w.start, at, size};
             runtime.CopyBuffer(w.buffer, readback.get(), {&copy, 1});
             copied = true;

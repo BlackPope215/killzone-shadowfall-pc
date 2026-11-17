@@ -151,6 +151,9 @@ private:
     /// copy is written back within the frame its GPU work completes.
     std::unique_ptr<VideoCore::Buffer> readback;
     u64 readback_head = 0;
+    /// Tick of the last copy into each eighth of the ring: a lap that comes back to a part whose
+    /// write-backs have not run yet waits for them instead of overwriting their bytes.
+    std::array<u64, 8> readback_ticks{};
     std::unordered_map<u64, Layout> layouts;     ///< by copy shader hash
     struct Written {
         VAddr guest;
