@@ -622,6 +622,31 @@ void Runtime::CopyMip(VideoCore::Image* src, VideoCore::Image* dst, u32 mip, u32
     dst->flags &= ~VideoCore::ImageFlagBits::Dirty;
 }
 
+/// The bytes CopyImageWithBuffer uses for src and dst: the same mips, extents and 256-byte
+/// alignment, at most 128 MiB.
+static u64 CopyWithBufferBytes(const VideoCore::Image* src, const VideoCore::Image* dst) {
+    const u32 num_mips = std::max(1u, std::min(src->info.resources.levels, dst->info.resources.levels));
+    const u32 num_layers =
+        std::max(1u, std::min(src->info.resources.layers, dst->info.resources.layers));
+    u64 total = 0;
+    for (u32 mip = 0; mip < num_mips; ++mip) {
+        const vk::BufferImageCopy region = {
+            .imageSubresource{.aspectMask = src->aspect_mask & ~vk::ImageAspectFlagBits::eStencil,
+                              .mipLevel = mip,
+                              .layerCount = num_layers},
+            .imageExtent = {std::max(src->info.size.width >> mip, 1u),
+                            std::max(src->info.size.height >> mip, 1u),
+                            std::max(src->info.size.depth >> mip, 1u)},
+        };
+        const u64 size = BufferImageCopySize(region, src->info.pixel_format);
+        if (total + size > 128_MB) {
+            break;
+        }
+        total = (total + size + 255) & ~u64{255};
+    }
+    return std::max<u64>(total, 64_KB);
+}
+
 void Runtime::CopyColorAndDepth(VideoCore::Image* src, VideoCore::Image* dst) {
     TraceOp("color/depth copy into", dst);
     // gow3: with GOW3_NO_MSAA a guest multisampled depth target is single-sampled on the host; a
@@ -635,9 +660,11 @@ void Runtime::CopyColorAndDepth(VideoCore::Image* src, VideoCore::Image* dst) {
             CopyImage(src, dst);
         } else {
             // Perform depth from/to color copy using the intermediate copy buffer.
-            static constexpr size_t COPY_BUFFER_SIZE = 128_MB;
-            const auto copy_ref =
-                staging_pool.Request(COPY_BUFFER_SIZE, VideoCore::MemoryType::DeviceLocal);
+            // The bytes CopyImageWithBuffer lays out for this pair, not 128 MiB each time (from
+            // SpartanPort d698ec9): most of these copies are one depth target, a few MiB, and a
+            // 128 MiB request wrapped the staging ring and waited on its fences.
+            const auto copy_ref = staging_pool.Request(CopyWithBufferBytes(src, dst),
+                                                       VideoCore::MemoryType::DeviceLocal, 256);
             CopyImageWithBuffer(src, dst, copy_ref.buffer, copy_ref.offset);
         }
     } else if (src->info.num_samples == 1 && (dst->info.num_samples > 1 || guest_ms_depth) &&
