@@ -144,9 +144,15 @@ private:
     VideoCore::TextureCache& texture_cache;
     Core::MemoryManager* memory;
     std::unique_ptr<VideoCore::Buffer> counters; ///< four u32 byte offsets (Vulkan's counters)
+    /// gow3: host-visible ring the captures are copied into on their way back to guest memory
+    /// (StreamOutWriteback); 8 MiB is a few hundred frames of Killzone's captures, and each
+    /// copy is written back within the frame its GPU work completes.
+    std::unique_ptr<VideoCore::Buffer> readback;
+    u64 readback_head = 0;
     std::unordered_map<u64, Layout> layouts;     ///< by copy shader hash
     struct Written {
         VAddr guest;
+        u64 start; ///< bytes before the capture's first vertex (the offset the game set)
         const VideoCore::Buffer* buffer;
         u64 offset;
         u64 size;

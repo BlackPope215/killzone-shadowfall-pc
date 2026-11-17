@@ -17,7 +17,6 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
-#include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
 #include "video_core/renderer_vulkan/vk_streamout_diag.h"
 #include "video_core/texture_cache/texture_cache.h"
 
@@ -26,6 +25,7 @@ namespace Vulkan {
 namespace {
 
 constexpr u64 CounterBytes = 4 * sizeof(u32);
+constexpr u64 ReadbackBytes = 8ull << 20;
 
 /// Reads `size` bytes of guest memory, or false when they are not mapped.
 bool ReadGuest(Core::MemoryManager* memory, VAddr address, void* out, u64 size) {
@@ -218,6 +218,11 @@ StreamOut::StreamOut(const Instance& instance_, Runtime& runtime_,
         vk::BufferUsageFlagBits::eTransformFeedbackCounterBufferEXT);
     // Offsets start at the beginning of each buffer, as after a GPU reset.
     runtime.FillBuffer(counters.get(), 0, CounterBytes, 0);
+    if (StreamOutWanted() && StreamOutWriteback()) {
+        readback = std::make_unique<VideoCore::Buffer>(instance, 0, ReadbackBytes,
+                                                       VideoCore::MemoryType::HostCached,
+                                                       "Stream-out readback");
+    }
 }
 
 StreamOut::~StreamOut() = default;
@@ -322,7 +327,8 @@ XfbDraw StreamOut::Prepare(const AmdGpu::Regs& regs, bool& needs_barrier) {
         draw.counters[b] = counters->Handle();
         draw.counter_offsets[b] = b * sizeof(u32);
         draw.num_counters = b + 1;
-        written[num_written++] = {*bases[b], buffer, offset, sizes[b]};
+        const u64 start = explicit_offset[b] >= 0 ? std::min<u64>(explicit_offset[b], sizes[b]) : 0;
+        written[num_written++] = {*bases[b], start, buffer, offset, sizes[b]};
         if (StreamoutDiag::On()) {
             StreamoutDiag::Captured(*bases[b], *bases[b] + sizes[b],
                                     AmdGpu::GetParams(regs.vs_program).hash);
@@ -348,21 +354,30 @@ void StreamOut::Finish(const XfbDraw& draw) {
                              vk::PipelineStageFlagBits2::eTransformFeedbackEXT,
                              vk::AccessFlagBits2::eTransformFeedbackWriteEXT);
     }
-    if (StreamOutWriteback()) {
+    if (readback && !readback->mapped_data.empty()) {
         // The captured range back to guest memory once the GPU has written it (as the deferred
         // image readbacks do): the CPU reads what the GPU wrote, not what the page held before.
-        auto& pool = runtime.GetStagingPool();
         auto& scheduler = runtime.GetScheduler();
         for (u32 i = 0; i < num_written; ++i) {
             const auto& w = written[i];
-            const auto download = pool.Request(w.size, VideoCore::MemoryType::HostCached, 16);
-            const vk::BufferCopy copy{w.offset, download.offset, w.size};
-            runtime.CopyBuffer(w.buffer, download.buffer, {&copy, 1});
-            scheduler.DeferPriorityOperation([this, guest = w.guest, download, size = w.size] {
-                download.Invalidate();
-                memory->TryWriteBacking(std::bit_cast<u8*>(guest), download.mapped, size);
-                runtime.GetStagingPool().FreeDeferred(download);
-            });
+            // What this capture can have written: from the offset the game set to the end.
+            const u64 size = w.size - w.start;
+            if (size == 0 || size > ReadbackBytes / 4) {
+                continue;
+            }
+            if (readback_head + size > ReadbackBytes) {
+                readback_head = 0;
+            }
+            const u64 at = readback_head;
+            readback_head = (readback_head + size + 255) & ~u64{255};
+            const vk::BufferCopy copy{w.offset + w.start, at, size};
+            runtime.CopyBuffer(w.buffer, readback.get(), {&copy, 1});
+            scheduler.DeferPriorityOperation(
+                [this, guest = w.guest + w.start, buffer = readback.get(), at, size] {
+                    buffer->Invalidate(at, size);
+                    memory->TryWriteBacking(std::bit_cast<u8*>(guest),
+                                            buffer->mapped_data.data() + at, size);
+                });
             if (++writebacks == 1) {
                 std::printf("Stream-out: captures are copied back to guest memory "
                             "(GOW3_STREAMOUT_WRITEBACK=0: off)\n");
