@@ -629,6 +629,7 @@ static u64 CopyWithBufferBytes(const VideoCore::Image* src, const VideoCore::Ima
     const u32 num_layers =
         std::max(1u, std::min(src->info.resources.layers, dst->info.resources.layers));
     u64 total = 0;
+    u64 end = 0;
     for (u32 mip = 0; mip < num_mips; ++mip) {
         const vk::BufferImageCopy region = {
             .imageSubresource{.aspectMask = src->aspect_mask & ~vk::ImageAspectFlagBits::eStencil,
@@ -642,9 +643,15 @@ static u64 CopyWithBufferBytes(const VideoCore::Image* src, const VideoCore::Ima
         if (total + size > 128_MB) {
             break;
         }
+        // The upload reads the same region in dst's format, which can take more bytes per texel
+        // (a D16 depth copied into an R32 colour image): the buffer must hold that read too.
+        vk::BufferImageCopy upload = region;
+        upload.imageSubresource.aspectMask = dst->aspect_mask & ~vk::ImageAspectFlagBits::eStencil;
+        const u64 read = BufferImageCopySize(upload, dst->info.pixel_format);
+        end = std::max(end, total + std::max(size, read));
         total = (total + size + 255) & ~u64{255};
     }
-    return std::max<u64>(total, 64_KB);
+    return std::max<u64>((std::max(end, total) + 255) & ~u64{255}, 64_KB);
 }
 
 void Runtime::CopyColorAndDepth(VideoCore::Image* src, VideoCore::Image* dst) {

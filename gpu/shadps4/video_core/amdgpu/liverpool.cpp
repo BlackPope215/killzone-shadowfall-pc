@@ -1560,10 +1560,11 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         // gow3: compute work uses the caches, so the draw pipe is drained first, but only before
         // packets that touch memory, the caches or graphics registers (as tlg_pc 2170d5e):
         // padding, nested buffers (drained per packet inside), cache hints and compute program
-        // registers leave queued draws flowing. GOW3_COMPUTE_DRAIN=all: before every packet.
+        // registers leave queued draws flowing. Opt-in (GOW3_COMPUTE_DRAIN=selective) until it is
+        // cleared of a device loss seen with it on; by default before every packet, as before.
         static const bool drain_all = [] {
             const char* env = std::getenv("GOW3_COMPUTE_DRAIN");
-            return env && std::strcmp(env, "all") == 0;
+            return !env || std::strcmp(env, "selective") != 0;
         }();
         if (rasterizer) {
             const bool cs_program_regs = [&] {
