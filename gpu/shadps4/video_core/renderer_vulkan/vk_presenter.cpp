@@ -159,7 +159,14 @@ float PqToNits(float encoded) {
     return 10000.0f * std::pow(std::max(vp - c1, 0.0f) / std::max(c2 - c3 * vp, 1e-6f), 1.0f / m1);
 }
 
-u8 HdrToSrgb8(float nits) {
+// sdr_white_nits: 0 for the game's own HDR10, whose 100 nits become white with the highlights
+// compressed. gow3: for the SDR picture expanded to HDR10 (HDR output), its white in nits: that
+// maps back to white and the 2.2 power decode is undone, so the screenshot shows the SDR picture.
+u8 HdrToSrgb8(float nits, float sdr_white_nits) {
+    if (sdr_white_nits > 0.0f) {
+        const float linear = std::clamp(nits / sdr_white_nits, 0.0f, 1.0f);
+        return u8(std::pow(linear, 1.0f / 2.2f) * 255.0f + 0.5f);
+    }
     const float x = std::max(nits, 0.0f) / 100.0f; // 100-nit SDR white
     const float linear = std::clamp(2.0f * x / (1.0f + x), 0.0f, 1.0f);
     const float srgb = linear <= 0.0031308f ? 12.92f * linear : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
@@ -167,7 +174,7 @@ u8 HdrToSrgb8(float nits) {
 }
 
 bool ScreenshotToRgba8(const u8* src, u32 width, u32 height, vk::Format format, bool hdr,
-                       std::vector<u8>& rgba) {
+                       float sdr_white_nits, std::vector<u8>& rgba) {
     const size_t pixels = size_t(width) * height;
     rgba.resize(pixels * 4);
     switch (format) {
@@ -202,9 +209,10 @@ bool ScreenshotToRgba8(const u8* src, u32 width, u32 height, vk::Format format, 
             if (hdr) {
                 // Rec.2020 PQ to SDR Rec.709.
                 const float r2020 = nits[r], g2020 = nits[g], b2020 = nits[b];
-                rgba[i * 4 + 0] = HdrToSrgb8(1.6605f * r2020 - 0.5876f * g2020 - 0.0728f * b2020);
-                rgba[i * 4 + 1] = HdrToSrgb8(-0.1246f * r2020 + 1.1329f * g2020 - 0.0083f * b2020);
-                rgba[i * 4 + 2] = HdrToSrgb8(-0.0182f * r2020 - 0.1006f * g2020 + 1.1187f * b2020);
+                const float w = sdr_white_nits;
+                rgba[i * 4 + 0] = HdrToSrgb8(1.6605f * r2020 - 0.5876f * g2020 - 0.0728f * b2020, w);
+                rgba[i * 4 + 1] = HdrToSrgb8(-0.1246f * r2020 + 1.1329f * g2020 - 0.0083f * b2020, w);
+                rgba[i * 4 + 2] = HdrToSrgb8(-0.0182f * r2020 - 0.1006f * g2020 + 1.1187f * b2020, w);
             } else {
                 rgba[i * 4 + 0] = u8((r * 255 + 511) / 1023);
                 rgba[i * 4 + 1] = u8((g * 255 + 511) / 1023);
@@ -272,11 +280,13 @@ void CaptureScreenshot(const Instance& instance, Scheduler& scheduler, vk::Comma
                            vk::DependencyFlags{}, to_host, {}, {});
     scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation, info,
                                       width = frame.width, height = frame.height, format = frame.format,
-                                      hdr = frame.is_hdr, path = ScreenshotPath()] {
+                                      hdr = frame.is_hdr, sdr_white_nits = frame.sdr_white_nits,
+                                      path = ScreenshotPath()] {
         vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
         std::vector<u8> rgba;
         const bool converted =
-            ScreenshotToRgba8(static_cast<const u8*>(info.pMappedData), width, height, format, hdr, rgba);
+            ScreenshotToRgba8(static_cast<const u8*>(info.pMappedData), width, height, format, hdr,
+                              sdr_white_nits, rgba);
         vmaDestroyBuffer(allocator, buffer, allocation);
         if (!converted) {
             LOG_ERROR(Render_Vulkan, "Screenshot: unsupported format {}", vk::to_string(format));
@@ -335,9 +345,19 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
 
     fsr_pass.Create(device, instance.GetAllocator(), num_images);
     // gow3: frames are composed in RGBA8 (what frame generation reads and writes) and blitted
-    // into the swapchain's format.
-    pp_pass.Create(device, FrameGenerator::ColorFormat);
-    Gow3Overlay::Init(instance, swapchain.GetSurfaceFormat().format, num_images);
+    // into the swapchain's format; with HDR output in the swapchain's HDR10 format, and the post
+    // process pass expands the game's SDR picture until a flip asks for the game's own HDR.
+    pp_pass.Create(device, FrameFormat());
+    float overlay_white = 0.0f;
+    if (swapchain.GetHDR()) {
+        pp_settings.hdr = 2;
+        pp_settings.hdr_paper_white = HdrPaperWhite();
+        overlay_white = pp_settings.hdr_paper_white;
+        std::printf("HDR output: SDR picture expanded, paper white %.0f nits (GOW3_HDR_PAPER_WHITE); "
+                    "frame generation off\n",
+                    pp_settings.hdr_paper_white);
+    }
+    Gow3Overlay::Init(instance, swapchain.GetSurfaceFormat().format, num_images, overlay_white);
     frame_generator = std::make_unique<FrameGenerator>(instance, draw_scheduler);
     rasterizer->GetUpscaler().SetFrameGenerator(frame_generator.get());
 
@@ -477,7 +497,7 @@ void Presenter::RecreateFrame(Frame* frame, u32 width, u32 height) {
     }
     DestroyGenerated(frame); // made again at the new size when needed
 
-    const vk::Format format = FrameGenerator::ColorFormat;
+    const vk::Format format = FrameFormat();
     const vk::ImageCreateInfo image_info = {
         .flags = vk::ImageCreateFlagBits::eMutableFormat,
         .imageType = vk::ImageType::e2D,
@@ -531,6 +551,7 @@ void Presenter::RecreateFrame(Frame* frame, u32 width, u32 height) {
 
     frame->is_hdr = swapchain.GetHDR();
     frame->format = format;
+    frame->sdr_white_nits = pp_settings.hdr == 2 ? pp_settings.hdr_paper_white : 0.0f;
 }
 
 Frame* Presenter::PrepareLastFrame() {
@@ -830,12 +851,13 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         Gow3Graphics::FsrPassRuns(fsr_settings.enable, true, int(image_size.width), int(image_size.height),
                                   int(frame->width), int(frame->height));
     image_view = fsr_pass.Render(cmdbuf, image_view, image_size, {frame->width, frame->height},
-                                 fsr_settings, frame->is_hdr);
+                                 fsr_settings, pp_settings.hdr == 1);
 
     // Vulkan has no sRGB variant of the 10-bit format, so an A2R10G10B10Srgb buffer reaches
     // the post process pass still sRGB encoded and has to be decoded there instead.
     pp_settings.srgb_input =
         attribute.attrib.pixel_format == Libraries::VideoOut::PixelFormat::A2R10G10B10Srgb;
+    frame->sdr_white_nits = pp_settings.hdr == 2 ? pp_settings.hdr_paper_white : 0.0f;
     pp_pass.Render(cmdbuf, image_view, image_size, *frame, pp_settings);
 
     // gow3: frame generation: the frame between the previous frame and this one. Killzone's
@@ -880,7 +902,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_target});
             const auto scaled = fsr_pass.Render(cmdbuf, source, hudless_size,
                                                 {frame->width, frame->height}, fsr_settings,
-                                                frame->is_hdr);
+                                                pp_settings.hdr == 1);
             pp_pass.Render(cmdbuf, scaled, hudless_size, hudless_frame, pp_settings);
             hudless = hudless_frame.image;
             hudless_view = hudless_frame.image_view;

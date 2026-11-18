@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstdlib>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -40,6 +42,8 @@ struct Frame {
     vk::Semaphore ready_semaphore;
     u64 ready_tick;
     bool is_hdr{false};
+    /// gow3: the SDR picture's white in nits when it was expanded to HDR10, else 0 (screenshots).
+    float sdr_white_nits{0.0f};
     u8 id{};
     vk::Format format{}; ///< gow3: of `image` (screenshots)
     /// gow3: frame generation: the frames made between the previous frame and this one,
@@ -90,8 +94,22 @@ public:
         if (!IsHDRSupported()) {
             return;
         }
-        swapchain.SetHDR(enable);
-        pp_settings.hdr = enable ? 1 : 0;
+        // gow3: with HDR output the swapchain is HDR10 from the start and stays so: the game's
+        // own HDR10 is passed through, its SDR picture expanded (post_process.frag).
+        swapchain.SetHDR(true);
+        pp_settings.hdr = enable ? 1 : 2;
+    }
+
+    /// gow3: the frames' format: RGBA8, or the swapchain's HDR10 format with HDR output.
+    vk::Format FrameFormat() const {
+        return swapchain.GetHDR() ? SURFACE_FORMAT_HDR.format : FrameGenerator::ColorFormat;
+    }
+
+    /// gow3: nits of the SDR picture's white with HDR output (GOW3_HDR_PAPER_WHITE, 80 to 500).
+    static float HdrPaperWhite() {
+        const char* env = std::getenv("GOW3_HDR_PAPER_WHITE");
+        const float nits = env && *env ? float(std::atof(env)) : 200.0f;
+        return std::clamp(nits, 80.0f, 500.0f);
     }
 
     VideoCore::Image& RegisterVideoOutSurface(

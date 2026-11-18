@@ -31,6 +31,8 @@ extern "C" void runtime_restart(void); // src/probe.c: starts run.py again, ends
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "video_core/renderdoc.h"
+#include "video_core/host_shaders/overlay_hdr_frag.h"
+#include "video_core/renderer_vulkan/vk_shader_util.h"
 
 // DejaVu Sans (Cyrillic), embedded (third_party/fonts, Bitstream Vera license).
 #ifdef _WIN32
@@ -1365,7 +1367,7 @@ void ShowNotice(const std::string& text, int milliseconds) {
     notice_until.store(NowMs() + milliseconds, std::memory_order_relaxed);
 }
 
-void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) {
+void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count, float hdr_white_nits) {
     std::scoped_lock lock{imgui_mutex};
     if (initialized) {
         return;
@@ -1447,6 +1449,18 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
         .colorAttachmentCount = 1,
         .pColorAttachmentFormats = &color_format,
     };
+    // HDR output: ImGui writes SDR values, which the HDR10 swapchain would read as PQ (white at
+    // 10000 nits): its own fragment shader converts them (overlay_hdr.frag). The code must outlive
+    // the backend.
+    static std::vector<u32> hdr_frag(std::begin(OVERLAY_HDR_FRAG), std::end(OVERLAY_HDR_FRAG));
+    if (hdr_white_nits > 0.0f) {
+        Vulkan::SetSpecConstantDefault(hdr_frag, 0, hdr_white_nits);
+        info.CustomShaderFragCreateInfo = {
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = hdr_frag.size() * sizeof(u32),
+            .pCode = hdr_frag.data(),
+        };
+    }
     if (!ImGui_ImplVulkan_Init(&info)) {
         std::printf("Overlay: ImGui Vulkan backend init failed\n");
         ImGui::DestroyContext();

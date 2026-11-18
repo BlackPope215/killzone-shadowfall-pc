@@ -99,6 +99,12 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
         Gow3Settings::Get().display_mode = Gow3Graphics::Borderless;
     }
     ApplyDisplayMode(Gow3Settings::Get().display_mode);
+    // gow3 (as SpartanPort 0d21602, after wipeout_pc a2989bf5c7): a driver can offer the HDR10
+    // format for an SDR desktop too, so HDR output also needs HDR on for this display. SDL sets
+    // the flag only when the display's maximum is above its SDR white; an SDR white level above 1
+    // (80 nits), which SDL reports only while Windows drives the display in HDR10, says so too.
+    window_info.hdr_enabled = SDL_GetBooleanProperty(wp, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false) ||
+                              SDL_GetFloatProperty(wp, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f) > 1.0f;
     // gow3: the game has no mouse; the in-game menu draws its own cursor (Gow3Overlay::SetOpen).
     SDL_HideCursor();
     int w = 0, h = 0;

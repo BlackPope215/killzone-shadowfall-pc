@@ -17,4 +17,9 @@ namespace Vulkan {
  */
 vk::ShaderModule CompileSPV(std::span<const u32> code, vk::Device device);
 
+/// gow3: writes `value` as the default of the 32-bit float specialization constant `spec_id` in
+/// SPIR-V `code`, for a pipeline made without specialization info (ImGui's). False when the code
+/// has no such constant (then it is unchanged).
+bool SetSpecConstantDefault(std::span<u32> code, u32 spec_id, float value);
+
 } // namespace Vulkan

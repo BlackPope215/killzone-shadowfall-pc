@@ -21,7 +21,10 @@ class Instance;
 namespace Gow3Overlay {
 
 /// Present thread, once: the ImGui context and its Vulkan backend.
-void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count);
+/// hdr_white_nits: on the HDR10 swapchain (HDR output), the paper white the menu is drawn at;
+/// 0 on an SDR swapchain.
+void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count,
+          float hdr_white_nits = 0.0f);
 
 /// Window thread, for every SDL event: true when the menu consumed it.
 bool HandleEvent(const SDL_Event& event);

@@ -17,6 +17,9 @@ struct WindowSystemInfo {
     void* render_surface = nullptr;
     float render_surface_scale = 1.0f;
     WindowSystemType type = WindowSystemType::Headless;
+    /// gow3: HDR is on in Windows for the window's display, read once when the window is made
+    /// (after the display mode), so HDR output follows a change or a move on the next start.
+    bool hdr_enabled = false;
 };
 
 class WindowSDL {
