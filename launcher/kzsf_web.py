@@ -228,6 +228,12 @@ class Api:
                        ['30 FPS', '60 FPS'] + [f"{v} FPS ({t('fps_experimental')})" for v in c.FPS_LIMITS[2:-1]]
                        + [t('fps_unlimited')], 'fps_limit_help'),
                 toggle('vsync', 'vsync', 'vsync_help'),
+                toggle('hdr', 'hdr', 'hdr_help'),
+                toggle('hdr_auto', 'hdr_auto', 'hdr_auto_help', show_if={'key': 'hdr', 'in': [True]}),
+                slider('hdr_paper_white', 'hdr_white', 80, 500, 10, ' nits', 'hdr_white_help', default=200,
+                       show_if={'key': 'hdr', 'in': [True]}),
+                slider('hdr_peak', 'hdr_peak', 400, 10000, 100, ' nits', 'hdr_peak_help', default=1000,
+                       show_if={'key': 'hdr', 'in': [True]}),
                 toggle('show_fps', 'show_fps'),
                 slider('fov', 'fov', c.FOV_MIN, c.FOV_MAX, 5, '%', 'fov_help', default=100),
             ]},
@@ -364,7 +370,7 @@ class Api:
         for key in ('window_size', 'mouse_look', 'mouse_sens', 'mouse_invert', 'mouse_turn_boost', 'smart_pending',
                     'precompile', 'draw_pipe', 'nowait_writes', 'fast_locks', 'res_method', 'discord_rpc', 'pad_dead_zone',
                     'pad_speaker', 'quick_menu', 'quick_menu_hint', 'prompt_style', 'upscale_quality',
-                    'check_updates', 'game_language', 'menu_combo'):
+                    'check_updates', 'game_language', 'menu_combo', 'hdr'):
             values[key] = s.get(key, c.LAUNCHER_DEFAULTS.get(key))
         values['window_size'] = s.get('window_size') if s.get('window_size') in c.WINDOW_SIZES else '1920x1080'
         values['ultrawide'] = s.get('ultrawide') if s.get('ultrawide') in c.ULTRAWIDE else 'off'

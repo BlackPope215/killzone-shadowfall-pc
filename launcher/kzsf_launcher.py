@@ -155,6 +155,10 @@ TEXTS = {
                           'FSR 3.1 funciona en cualquier placa; DLSS solo en RTX 40/50 (en otras usa FSR 3.1). '
                           'No funciona con el método clásico ni a 720p. Con un monitor de 60 Hz desactivá VSync.',
         'vsync_help': 'Evita el tearing. Desactivado: un poco menos de latencia.',
+        'hdr': 'Salida HDR', 'hdr_help': 'Con HDR activado en Windows para esta pantalla. La imagen SDR del juego se amplía a HDR10.',
+        'hdr_auto': 'Igual que la configuración HDR de Windows', 'hdr_auto_help': 'Brillo y pico desde Windows; desactivado: los valores de abajo. El menú del juego (Insert) los cambia en vivo.',
+        'hdr_white': 'Brillo HDR', 'hdr_white_help': 'Dónde se muestra el blanco del juego.',
+        'hdr_peak': 'Pico de brillo HDR', 'hdr_peak_help': 'El pico de tu pantalla: las luces más brillantes se comprimen suavemente.',
         'anisotropy': 'Filtrado anisotrópico', 'aniso_game': 'El del juego',
         'mip_bias': 'Nitidez de texturas lejanas', 'mip_game': 'La del juego',
         'mip_sharper': 'más nítida', 'mip_softer': 'más suave',
@@ -373,6 +377,10 @@ TEXTS = {
                           'FPS or more. FSR 3.1 works on any card; DLSS on RTX 40/50 only (others get FSR 3.1). '
                           'Not with the classic method or at 720p. On a 60 Hz monitor turn VSync off.',
         'vsync_help': 'Prevents tearing. Off: slightly lower latency.',
+        'hdr': 'HDR output', 'hdr_help': "With HDR on in Windows for this display. The game's SDR picture is expanded to HDR10.",
+        'hdr_auto': 'Match Windows HDR settings', 'hdr_auto_help': 'Brightness and peak from Windows; off: the values below. The in-game menu (Insert) changes them live.',
+        'hdr_white': 'HDR brightness', 'hdr_white_help': "Where the game's white is shown.",
+        'hdr_peak': 'HDR peak brightness', 'hdr_peak_help': "Your display's peak: brighter highlights roll off smoothly.",
         'anisotropy': 'Anisotropic filtering', 'aniso_game': 'Game default',
         'mip_bias': 'Distant texture sharpness', 'mip_game': 'Game default',
         'mip_sharper': 'sharper', 'mip_softer': 'softer',
@@ -742,6 +750,7 @@ GRAPHICS_DEFAULTS = {
     'motion_blur': '1', 'depth_of_field': '1', 'bloom': '1', 'film_grain': '1', 'camera_shake': '1',
     'cheat_god': '0', 'cheat_ammo': '0', 'cheat_no_reload': '0', 'cheat_sprint': '0', 'cheat_echo': '0',
     'cheat_chapters': '0',
+    'hdr_auto': '1', 'hdr_paper_white': '200', 'hdr_peak': '1000',
 }
 LAUNCHER_DEFAULTS = {'game_dir': '', 'update_dir': '', 'language': '', 'window_size': '1920x1080',
                      'key_map': {}, 'pad_map': {}, 'mouse_look': True, 'mouse_sens': 1.0,
@@ -750,7 +759,8 @@ LAUNCHER_DEFAULTS = {'game_dir': '', 'update_dir': '', 'language': '', 'window_s
                      'draw_pipe': True, 'nowait_writes': True, 'fast_locks': True,
                      'res_method': 'upscale', 'discord_rpc': True, 'pad_dead_zone': 0,
                      'pad_speaker': 100, 'fov': 100, 'quick_menu': True, 'quick_menu_hint': True,
-                     'menu_combo': 0, 'prompt_style': 0, 'upscale_quality': 'native', 'game_language': 'auto'}
+                     'menu_combo': 0, 'prompt_style': 0, 'upscale_quality': 'native', 'game_language': 'auto',
+                     'hdr': False}
 # Discord Rich Presence: the application "Killzone Shadow Fall" (its name is what Discord shows) and the
 # key of its large image asset. Empty ID: no presence.
 DISCORD_ID = '1562348304153706608'
@@ -1168,6 +1178,9 @@ def game_env(settings, graphics, needs_update):
         env['GOW3_FRAME_GEN'] = 'off'
         for key in ('GOW3_UPSCALER', 'GOW3_SCENE_NATIVE', 'GOW3_JITTER', 'GOW3_NATIVE_AA', 'GOW3_RENDER_RES'):
             env.pop(key, None)
+    # HDR output (GOW3_HDR): the game turns it on only with HDR on in Windows for its display.
+    if settings.get('hdr'):
+        env['GOW3_HDR'] = '1'
     if graphics['fps_limit'] in EXPERIMENTAL_FPS:
         env['GOW3_VBLANK_HZ'] = '0'
         env['GOW3_FPS_LIMIT'] = graphics['fps_limit']
