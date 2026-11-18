@@ -1,4 +1,5 @@
 // gow3: SDL3 window for the Vulkan swapchain (X11 or Wayland).
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -103,8 +104,20 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     // format for an SDR desktop too, so HDR output also needs HDR on for this display. SDL sets
     // the flag only when the display's maximum is above its SDR white; an SDR white level above 1
     // (80 nits), which SDL reports only while Windows drives the display in HDR10, says so too.
-    window_info.hdr_enabled = SDL_GetBooleanProperty(wp, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false) ||
-                              SDL_GetFloatProperty(wp, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f) > 1.0f;
+    const float sdr_white_level = SDL_GetFloatProperty(wp, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f);
+    const float hdr_headroom = SDL_GetFloatProperty(wp, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f);
+    window_info.hdr_enabled =
+        SDL_GetBooleanProperty(wp, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false) || sdr_white_level > 1.0f;
+    // gow3 (as SpartanPort ab6798a): what Windows gives for "Match Windows HDR settings": paper
+    // white is its SDR content brightness (white level x 80 nits), the peak the display's maximum
+    // (white level x headroom x 80 nits). Each only when SDL reports it (above its floor of 1).
+    if (sdr_white_level > 1.0f || hdr_headroom > 1.0f) {
+        Gow3Settings::Get().hdr_windows_white = int(std::clamp(sdr_white_level * 80.0f, 80.0f, 500.0f) + 0.5f);
+    }
+    if (hdr_headroom > 1.0f) {
+        Gow3Settings::Get().hdr_windows_peak =
+            int(std::clamp(sdr_white_level * hdr_headroom * 80.0f, 400.0f, 10000.0f) + 0.5f);
+    }
     // gow3: the game has no mouse; the in-game menu draws its own cursor (Gow3Overlay::SetOpen).
     SDL_HideCursor();
     int w = 0, h = 0;

@@ -661,6 +661,25 @@ void ImageTab() {
         CheckRow("VSync", s.vsync, "Waits for the monitor: no tearing, a little more input delay.");
         ImGui::EndTable();
     }
+    // HDR output (from SpartanPort ab6798a): the expanded SDR picture's white and the display's peak.
+    ImGui::SeparatorText("HDR");
+    if (BeginRows("##hdr")) {
+        const bool active = s.hdr_active;
+        ImGui::BeginDisabled(!active);
+        CheckRow("Match Windows HDR settings", s.hdr_auto,
+                 active ? "Brightness from Windows' SDR content brightness, peak from the display."
+                        : "HDR output is off: launcher > Allow HDR output, and HDR on in Windows.");
+        ImGui::BeginDisabled(s.hdr_auto && s.hdr_windows_white > 0);
+        SliderRow("HDR brightness", s.hdr_paper_white, 80, 500, "%d nits",
+                  "Where the game's white is shown. 200 is a good start; higher for a bright room.");
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(s.hdr_auto && s.hdr_windows_peak > 0);
+        SliderRow("HDR peak brightness", s.hdr_peak, 400, 10000, "%d nits",
+                  "Your display's peak: highlights above it roll off smoothly instead of clipping.");
+        ImGui::EndDisabled();
+        ImGui::EndDisabled();
+        ImGui::EndTable();
+    }
     const int iw = s.image_width, ih = s.image_height, ww = s.window_width, wh = s.window_height;
     const bool downscaling = iw > ww || ih > wh;
     const bool rcas_blocked = s.rcas && !s.rcas_applied;

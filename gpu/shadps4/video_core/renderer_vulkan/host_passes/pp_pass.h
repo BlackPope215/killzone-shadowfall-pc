@@ -21,8 +21,9 @@ public:
         u32 hdr = 0;
         u32 srgb_input = 0;
         float hdr_paper_white = 200.0f; // hdr 2: nits of the SDR picture's white
+        float hdr_peak = 1000.0f;       // hdr 2: nits the highlights are fitted under
     };
-    static_assert(sizeof(Settings) == 16);
+    static_assert(sizeof(Settings) == 20);
 
     void Create(vk::Device device, vk::Format surface_format);
 

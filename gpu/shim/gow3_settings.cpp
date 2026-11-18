@@ -115,6 +115,12 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr1 = i != 0;
     } else if (key == "rcas") {
         v.rcas = i != 0;
+    } else if (key == "hdr_paper_white") {
+        v.hdr_paper_white = value.empty() ? 200 : std::clamp(i, 80, 500);
+    } else if (key == "hdr_peak") {
+        v.hdr_peak = value.empty() ? 1000 : std::clamp(i, 400, 10000);
+    } else if (key == "hdr_auto") {
+        v.hdr_auto = value.empty() || i != 0;
     } else if (key == "rcas_strength") {
         v.rcas_strength = Gow3Graphics::ParseRcasStrength(value.empty() ? -1 : i);
     } else if (key == "frames_queued") {
@@ -241,6 +247,8 @@ void Load() {
         {"GOW3_ASYNC_SHADERS", "async_shaders"},      {"GOW3_DEFERRED_READBACK", "deferred_readback"},
         {"GOW3_STALE_READBACK", "stale_readback"},     {"GOW3_FSR1", "fsr1"},
         {"GOW3_RCAS", "rcas"},                        {"GOW3_FRAMES_AHEAD", "frames_queued"},
+        {"GOW3_HDR_PAPER_WHITE", "hdr_paper_white"},  {"GOW3_HDR_PEAK", "hdr_peak"},
+        {"GOW3_HDR_AUTO", "hdr_auto"},
         {"GOW3_ANISOTROPY", "anisotropy"},            {"GOW3_VIBRATION", "vibration"},
         {"GOW3_MIP_LOD_BIAS", "mip_lod_bias"},        {"GOW3_OUTPUT_RES", "output_res"},
         // Killzone controls (tests; the launcher keeps them in this file).
@@ -391,6 +399,8 @@ void Save() {
                  Gow3Graphics::Resolutions[std::clamp(v.render_resolution.load(), 0, 5)].data(),
                  v.engine_fps.load(), int(v.deferred_readback.load()), int(v.stale_readback.load()),
                  int(v.restart_unconfirmed.load()));
+    std::fprintf(file, "hdr_paper_white=%d\nhdr_peak=%d\nhdr_auto=%d\n", v.hdr_paper_white.load(),
+                 v.hdr_peak.load(), int(v.hdr_auto.load()));
     std::fprintf(file, "anisotropy=%d\nvibration=%d\nmip_lod_bias=%.3f\nlod_distance=%d\n",
                  v.anisotropy.load(), v.vibration.load(), v.mip_lod_bias.load(), v.lod_distance.load());
     std::fprintf(file,

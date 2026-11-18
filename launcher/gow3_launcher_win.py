@@ -301,9 +301,12 @@ INI_DEFAULTS = {'upscaler': 'fsr3', 'preset': '1',
                 'async_shaders': '1', 'deferred_readback': '1', 'stale_readback': '1',
                 'render_resolution': 'native', 'engine_fps': '120',
                 'frames_queued': '1', 'cheat_very_hard': '0', 'cheat_double_jumps': '0',
-                'anisotropy': '0', 'vibration': '100'}
+                'anisotropy': '0', 'vibration': '100',
+                'hdr_auto': '1', 'hdr_paper_white': '200', 'hdr_peak': '1000'}
 DISPLAY_MODES = [('windowed', ('Windowed',)), ('borderless', ('Borderless',)), ('fullscreen', ('Fullscreen',))]
 ANISOTROPY = [('0', ('Game default',)), ('2', ('2x',)), ('4', ('4x',)), ('8', ('8x',)), ('16', ('16x',))]
+HDR_PAPER_WHITES = [(str(n), (f'{n} nits',)) for n in (80, 100, 150, 200, 250, 300, 400, 500)]
+HDR_PEAKS = [(str(n), (f'{n} nits',)) for n in (400, 600, 800, 1000, 1500, 2000, 4000, 10000)]
 FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('120', ('120',)), ('240', ('240',)), ('0', ('Unlimited',))]
 # The sidebar's pages, top to bottom, and the methods that refresh a page's lists when it is shown.
 PAGES = ('home', 'graphics', 'performance', 'game', 'advanced')
@@ -1231,6 +1234,14 @@ class Launcher:
         self.check(f, 'hdr', 'app', _('Allow HDR output', 'Разрешить HDR'),
                    _('When HDR is on in Windows and the display supports it.',
                      'Если HDR включён в Windows и монитор его поддерживает.'))
+        self.check(f, 'hdr_auto', 'ini', _('Match Windows HDR settings', 'Как в настройках HDR Windows'),
+                   _("Brightness and peak from Windows; off: the two below. The in-game menu (Image) changes them live.",
+                     'Яркость и пик из Windows; выкл.: значения ниже. Меню в игре (Image) меняет их на лету.'))
+        self.row(f, _('HDR brightness', 'Яркость HDR'), self.choice(f, 'hdr_paper_white', 'ini', HDR_PAPER_WHITES, width=18),
+                 _("Where the game's white is shown.", 'Где отображается белый цвет игры.'))
+        self.row(f, _('HDR peak brightness', 'Пиковая яркость HDR'), self.choice(f, 'hdr_peak', 'ini', HDR_PEAKS, width=18),
+                 _("Your display's peak; brighter highlights roll off smoothly.",
+                   'Пик вашего монитора; более яркие блики плавно сжимаются.'))
         self.section(f, _('Textures'))
         self.row(f, _('Anisotropic filtering'), self.choice(f, 'anisotropy', 'ini', ANISOTROPY),
                  _('Sharper floors and walls seen at an angle, at little cost on most graphics cards.'),

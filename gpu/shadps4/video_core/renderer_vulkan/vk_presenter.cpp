@@ -351,11 +351,13 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     float overlay_white = 0.0f;
     if (swapchain.GetHDR()) {
         pp_settings.hdr = 2;
-        pp_settings.hdr_paper_white = HdrPaperWhite();
+        bool white_windows = false, peak_windows = false;
+        UpdateHdrLevels(&white_windows, &peak_windows);
         overlay_white = pp_settings.hdr_paper_white;
-        std::printf("HDR output: SDR picture expanded, paper white %.0f nits (GOW3_HDR_PAPER_WHITE); "
-                    "frame generation off\n",
-                    pp_settings.hdr_paper_white);
+        std::printf("HDR output: SDR picture expanded, paper white %.0f nits (%s), peak %.0f nits "
+                    "(%s); frame generation off\n",
+                    pp_settings.hdr_paper_white, white_windows ? "Windows" : "menu",
+                    pp_settings.hdr_peak, peak_windows ? "Windows" : "menu");
     }
     Gow3Overlay::Init(instance, swapchain.GetSurfaceFormat().format, num_images, overlay_white);
     frame_generator = std::make_unique<FrameGenerator>(instance, draw_scheduler);
@@ -485,6 +487,21 @@ void Presenter::EnsureGenerated(Frame* frame, u32 count) {
 
 bool Presenter::IsVideoOutSurface(const AmdGpu::ColorBuffer& color_buffer) const {
     return std::ranges::find(vo_buffers_addr, color_buffer.Address()) != vo_buffers_addr.cend();
+}
+
+void Presenter::UpdateHdrLevels(bool* white_from_windows, bool* peak_from_windows) {
+    auto& s = Gow3Settings::Get();
+    const bool auto_white = s.hdr_auto && s.hdr_windows_white > 0;
+    const bool auto_peak = s.hdr_auto && s.hdr_windows_peak > 0;
+    pp_settings.hdr_paper_white = float(auto_white ? s.hdr_windows_white.load() : s.hdr_paper_white.load());
+    pp_settings.hdr_peak = float(auto_peak ? s.hdr_windows_peak.load() : s.hdr_peak.load());
+    s.hdr_active = pp_settings.hdr == 2;
+    if (white_from_windows) {
+        *white_from_windows = auto_white;
+    }
+    if (peak_from_windows) {
+        *peak_from_windows = auto_peak;
+    }
 }
 
 void Presenter::RecreateFrame(Frame* frame, u32 width, u32 height) {
@@ -857,6 +874,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     // the post process pass still sRGB encoded and has to be decoded there instead.
     pp_settings.srgb_input =
         attribute.attrib.pixel_format == Libraries::VideoOut::PixelFormat::A2R10G10B10Srgb;
+    UpdateHdrLevels();
     frame->sdr_white_nits = pp_settings.hdr == 2 ? pp_settings.hdr_paper_white : 0.0f;
     pp_pass.Render(cmdbuf, image_view, image_size, *frame, pp_settings);
 

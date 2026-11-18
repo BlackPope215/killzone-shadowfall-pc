@@ -75,6 +75,16 @@ struct Values {
     std::atomic<bool> rcas_applied{false};
     /// Set by the presenter: the game's image and the window it is shown in, in pixels.
     std::atomic<int> image_width{0}, image_height{0}, window_width{0}, window_height{0};
+    /// HDR output (GOW3_HDR=1, from SpartanPort ab6798a): nits of the game's white (80 to 500) and
+    /// of the display's peak the highlights are fitted under (400 to 10000). Live. hdr_auto takes
+    /// both from Windows at start where Windows gives them.
+    std::atomic<int> hdr_paper_white{200};
+    std::atomic<int> hdr_peak{1000};
+    std::atomic<bool> hdr_auto{true};
+    /// Set at start: the values Windows gives for the window's display, 0 when it gives none.
+    std::atomic<int> hdr_windows_white{0}, hdr_windows_peak{0};
+    /// Set by the presenter: the last frame was the SDR picture expanded to HDR10.
+    std::atomic<bool> hdr_active{false};
     std::atomic<int> frames_queued{1};
     /// Controller vibration strength in percent; 0 turns it off (runtime_pad.c). Live.
     std::atomic<int> vibration{100};

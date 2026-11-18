@@ -105,12 +105,10 @@ public:
         return swapchain.GetHDR() ? SURFACE_FORMAT_HDR.format : FrameGenerator::ColorFormat;
     }
 
-    /// gow3: nits of the SDR picture's white with HDR output (GOW3_HDR_PAPER_WHITE, 80 to 500).
-    static float HdrPaperWhite() {
-        const char* env = std::getenv("GOW3_HDR_PAPER_WHITE");
-        const float nits = env && *env ? float(std::atof(env)) : 200.0f;
-        return std::clamp(nits, 80.0f, 500.0f);
-    }
+    /// gow3: HDR output's paper white and peak for the next frame: the menu's sliders, or what
+    /// Windows gives with "Match Windows HDR settings" (Gow3Settings). True when each value came
+    /// from Windows (for the log).
+    void UpdateHdrLevels(bool* white_from_windows = nullptr, bool* peak_from_windows = nullptr);
 
     VideoCore::Image& RegisterVideoOutSurface(
         const Libraries::VideoOut::BufferAttributeGroup& attribute, VAddr cpu_address) {
