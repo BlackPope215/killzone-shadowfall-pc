@@ -310,6 +310,9 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
                         std::optional<SubresourceRange> subres_range) {
     auto& last_state = backing->state;
     auto& subresource_states = backing->subresource_states;
+    if (subres_range) {
+        subres_range = FitRange(*subres_range, "barrier");
+    }
 
     const bool needs_partial_transition =
         subres_range &&
@@ -409,6 +412,34 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
     last_state.layout = dst_layout;
     last_state.access_mask = dst_mask;
     last_state.pl_stage = dst_stage;
+}
+
+SubresourceRange Image::FitRange(const SubresourceRange& range, const char* what) const {
+    const u32 levels = std::max(info.resources.levels, 1u);
+    const u32 layers = std::max(info.resources.layers, 1u);
+    const bool fits = range.extent.levels != 0 && range.extent.layers != 0 &&
+                      u64{range.base.level} + range.extent.levels <= levels &&
+                      u64{range.base.layer} + range.extent.layers <= layers;
+    if (fits) {
+        return range;
+    }
+    SubresourceRange out = range;
+    out.base.level = std::min(range.base.level, levels - 1);
+    out.base.layer = std::min(range.base.layer, layers - 1);
+    out.extent.levels = std::clamp(range.extent.levels, 1u, levels - out.base.level);
+    out.extent.layers = std::clamp(range.extent.layers, 1u, layers - out.base.layer);
+    static std::atomic<u64> cases{0};
+    const u64 n = cases.fetch_add(1, std::memory_order_relaxed);
+    if (n < 16 || n % 1000 == 0) {
+        std::printf("Texture cache: range outside the image (%s, #%llu): image %#llx %ux%u, %u "
+                    "levels x %u layers; asked levels %u+%u layers %u+%u\n",
+                    what, static_cast<unsigned long long>(n + 1),
+                    static_cast<unsigned long long>(info.guest_address), info.size.width,
+                    info.size.height, info.resources.levels, info.resources.layers,
+                    range.base.level, range.extent.levels, range.base.layer, range.extent.layers);
+        std::fflush(stdout);
+    }
+    return out;
 }
 
 } // namespace VideoCore

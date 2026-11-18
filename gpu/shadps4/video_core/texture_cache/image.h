@@ -133,6 +133,11 @@ struct Image {
     ImageView& FindView(const ImageViewInfo& view_info, bool ensure_guest_samples = true);
 
     using Barriers = boost::container::small_vector<vk::ImageMemoryBarrier2, 32>;
+    /// gow3: `range` limited to the levels and layers this image has. A range past them ran off
+    /// the subresource states (an assert in GetBarriers) or made an invalid view (as fixed in
+    /// tlou-remastered-pc fef6832); each such case is logged (first 16, then every 1000th).
+    SubresourceRange FitRange(const SubresourceRange& range, const char* what) const;
+
     void GetBarriers(Barriers& out_barriers, vk::ImageLayout dst_layout, vk::AccessFlags2 dst_mask,
                      vk::PipelineStageFlags2 dst_stage,
                      std::optional<SubresourceRange> subres_range = {});
