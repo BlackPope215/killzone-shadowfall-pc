@@ -74,6 +74,12 @@ enum : std::uint64_t {
     /// A texture/storage request for the top rows of a cached image (same address and layout)
     /// uses that image, instead of creating and uploading a new one (texture_cache.cpp).
     PartialHeightViews = 1ull << 58,
+    /// A guest MSAA image counts as up to date despite Dirty (RefreshImage never uploads it), so
+    /// texture sets holding it hit their memo (gow3_image_state.h).
+    MsaaDirtyIgnored = 1ull << 59,
+    /// A readback query outside the span of every pending GPU-to-RAM copy returns without the
+    /// readback mutex (gow3_readback_bounds.h).
+    ReadbackBounds = 1ull << 60,
     // Bits 20-29 are used as raw debug toggles by the camera/object motion and the upscaler.
 };
 inline bool Disabled(std::uint64_t bit) {

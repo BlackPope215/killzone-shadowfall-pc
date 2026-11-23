@@ -10,6 +10,8 @@
 #include "video_core/texture_cache/readback_sources.h"
 #include <chrono>
 #include "gow3_toggles.h"
+#include "gow3_image_state.h"
+#include "gow3_readback_bounds.h"
 #include <optional>
 #include <cstdlib>
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
@@ -169,13 +171,26 @@ public:
         const Image& image = slot_images[image_id];
         const u32 flags = std::atomic_ref<u32>(const_cast<u32&>(reinterpret_cast<const u32&>(image.flags)))
                               .load(std::memory_order_acquire);
+        return UpToDate(image, flags);
+    }
+
+    /// gow3: IsUpToDate and the fast path of UpdateImage (gow3_image_state.h).
+    [[nodiscard]] bool UpToDate(const Image& image, u32 flags) const {
         constexpr u32 Dirty = static_cast<u32>(ImageFlagBits::Dirty);
         constexpr u32 Registered = static_cast<u32>(ImageFlagBits::Registered);
         constexpr u32 Aliased = static_cast<u32>(ImageFlagBits::Aliased);
-        return (flags & (Dirty | Registered | Aliased)) == Registered &&
-               !has_backing_writes.load(std::memory_order_acquire) &&
-               image.track_addr == image.guest_begin && image.track_addr_end == image.guest_end &&
-               image.lru_touched_tick == gc_tick;
+        const bool dirty = (flags & Dirty) != 0;
+        return Gow3ImageState::UpToDate({
+            .registered = (flags & Registered) != 0,
+            .dirty = dirty,
+            .aliased = (flags & Aliased) != 0,
+            // Only read when it matters: the field sits in the large ImageInfo.
+            .guest_samples = dirty ? image.info.guest_samples : 1u,
+            .backing_writes = has_backing_writes.load(std::memory_order_acquire),
+            .tracked = image.track_addr == image.guest_begin && image.track_addr_end == image.guest_end,
+            .touched = image.lru_touched_tick == gc_tick,
+            .msaa_dirty_ignored = dirty && !Gow3Toggle::Disabled(Gow3Toggle::MsaaDirtyIgnored),
+        });
     }
 
     /// Updates image contents if it was modified by CPU.
@@ -188,14 +203,8 @@ public:
             const Image& image = slot_images[image_id];
             const u32 flags = std::atomic_ref<u32>(const_cast<u32&>(reinterpret_cast<const u32&>(image.flags)))
                                   .load(std::memory_order_acquire);
-            constexpr u32 Dirty = static_cast<u32>(ImageFlagBits::Dirty);
-            constexpr u32 Registered = static_cast<u32>(ImageFlagBits::Registered);
             // Images sharing memory with another take the locked path: SynchronizeAlias.
-            constexpr u32 Aliased = static_cast<u32>(ImageFlagBits::Aliased);
-            if ((flags & (Dirty | Registered | Aliased)) == Registered &&
-                !has_backing_writes.load(std::memory_order_acquire) &&
-                image.track_addr == image.guest_begin && image.track_addr_end == image.guest_end &&
-                image.lru_touched_tick == gc_tick) {
+            if (UpToDate(image, flags)) {
                 return;
             }
         }
@@ -557,6 +566,7 @@ private:
     ReadbackQueue<Vulkan::StagingBufferRef> pending_readbacks;
     std::mutex readback_mutex;
     std::atomic<bool> has_pending_readbacks{false};
+    Gow3Readback::Bounds readback_bounds; ///< the span of pending_readbacks (ReadbackBounds)
     u64 readbacks_queued = 0, readbacks_completed = 0, readbacks_waited = 0;
     u64 readbacks_canceled = 0, readbacks_peak_bytes = 0;
     std::chrono::steady_clock::time_point readback_report = std::chrono::steady_clock::now();
