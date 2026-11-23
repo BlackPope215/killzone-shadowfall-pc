@@ -139,10 +139,11 @@ void BufferCache::RunGuestCopy(const Gow3Copy::Item& item) {
     buffer->Flush(dst - buffer->mapped_data.data(), item.size);
 }
 
-// Small guest copies run on the recording thread (it spins for work: no wakeup, and it is
-// idle most of the time); PoolSmallCopies (toggle 524288) batches them for the copy threads.
+// Small guest copies run on the copy threads, done before WriteData and fences wait for them
+// (SpartanPort 86b69e1: God of War III +3.5% against the Vulkan recording thread, whose backlog
+// they waited behind). Toggle 524288 (PoolSmallCopies) puts them back on the recording thread.
 void BufferCache::SmallGuestCopy(const Gow3Copy::Item& item) {
-    if (scheduler.IsRecordingDeferred() && !Gow3Toggle::Disabled(Gow3Toggle::PoolSmallCopies)) {
+    if (scheduler.IsRecordingDeferred() && Gow3Toggle::Disabled(Gow3Toggle::PoolSmallCopies)) {
         scheduler.RecordHostCopy([item] { item.run(item); });
         return;
     }
