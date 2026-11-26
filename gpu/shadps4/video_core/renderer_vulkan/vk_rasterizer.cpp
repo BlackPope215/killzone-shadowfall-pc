@@ -1269,6 +1269,14 @@ bool Rasterizer::JitterScope(const GraphicsPipeline* pipeline, const AmdGpu::Reg
     const bool opaque_only = scope == 'o';
     static const std::vector<u64> skip = [] {
         std::vector<u64> list;
+        // gow3: never jittered by default. The two from GOW3_JITTER_SKIP's earlier tests, and the
+        // vertex shaders of the four depth-writing G-buffer quads: shifted by the jitter they left
+        // the last column and row unwritten, and the lens flare streaked that edge into yellow
+        // lines along the right and bottom of the screen (FSR 3.1 and 4.1, RX 7900 XT).
+        // GOW3_JITTER_SKIP_DEFAULTS=0 drops these; GOW3_JITTER_SKIP adds more.
+        if (const char* off = std::getenv("GOW3_JITTER_SKIP_DEFAULTS"); !off || off[0] != '0') {
+            list = {0x1f21d848, 0xed83c748, 0x7e461485, 0xcdb685f3, 0x2c7ebcac, 0xcd8a3776};
+        }
         if (const char* env = std::getenv("GOW3_JITTER_SKIP")) {
             for (const char* p = env; *p;) {
                 char* end = nullptr;
@@ -1280,7 +1288,9 @@ bool Rasterizer::JitterScope(const GraphicsPipeline* pipeline, const AmdGpu::Reg
                 list.push_back(v);
                 p = end;
             }
-            std::printf("Upscaler: %zu shader(s) never jittered (GOW3_JITTER_SKIP)\n",
+        }
+        if (!list.empty()) {
+            std::printf("Upscaler: %zu shader(s) never jittered (defaults, GOW3_JITTER_SKIP)\n",
                         list.size());
         }
         return list;
