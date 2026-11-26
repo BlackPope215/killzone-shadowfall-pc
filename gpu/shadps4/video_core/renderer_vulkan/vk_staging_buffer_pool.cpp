@@ -60,6 +60,18 @@ StagingBufferPool::StagingBufferPool(const Instance& instance_, Scheduler& sched
             std::memset(block.buffer->mapped_data.data(), 0, block.buffer->mapped_data.size());
         }
     }
+    // gow3 (from the Bloodborne Windows port, f1329ce): the device-local blocks that texture
+    // detiling and depth/colour copies stage through exist from the start, so the first
+    // streaming of a level does not wait for vkAllocateMemory on the recording thread. As many
+    // as the trim keeps (GOW3_STAGING_DEVICE_KEEP_MB, 64 MiB by default), at most 4.
+    Ring& device_ring = rings[u32(MemoryType::DeviceLocal)];
+    for (u64 i = 0; i < std::min<u64>(keep_device_blocks, 4); ++i) {
+        device_ring.blocks.emplace_back(Block{
+            .buffer = std::make_unique<VideoCore::StreamBuffer>(
+                instance, scheduler, MemoryType::DeviceLocal, BLOCK_SIZE),
+            .last_used_frame = frame,
+        });
+    }
 }
 
 StagingBufferPool::~StagingBufferPool() = default;
