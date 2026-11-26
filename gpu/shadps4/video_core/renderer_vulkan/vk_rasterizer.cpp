@@ -1320,6 +1320,22 @@ bool Rasterizer::JitterScope(const GraphicsPipeline* pipeline, const AmdGpu::Reg
                         scope == 'q' ? ", not jittered" : "");
         }
     }
+    // gow3: no depth-writing G-buffer quad is jittered by default, in any level: the four of
+    // the skip list above were found in one scene, other levels draw others the same way, and a
+    // shifted one leaves the screen's last column and row unwritten (the lens flare then streaks
+    // it into yellow lines). GOW3_JITTER_QUADS=1 jitters them again.
+    static const bool jitter_quads = [] {
+        const char* env = std::getenv("GOW3_JITTER_QUADS");
+        const bool on = env && env[0] == '1';
+        if (!on) {
+            std::printf("Upscaler: depth-writing G-buffer quads not jittered "
+                        "(GOW3_JITTER_QUADS=1 jitters them)\n");
+        }
+        return on;
+    }();
+    if (gbuffer_quad && regs.depth_control.depth_write_enable && !jitter_quads) {
+        return false;
+    }
     // GOW3_JITTER_BISECT=<mask>:<value> (hex): G-buffer draws whose pixel shader hash has
     // (hash & mask) == value are not jittered; halving the set finds the shader that matters.
     static const std::array<u32, 2> bisect = [] {
