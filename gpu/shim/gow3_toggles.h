@@ -74,8 +74,9 @@ enum : std::uint64_t {
     /// A texture/storage request for the top rows of a cached image (same address and layout)
     /// uses that image, instead of creating and uploading a new one (texture_cache.cpp).
     PartialHeightViews = 1ull << 58,
-    /// A guest MSAA image counts as up to date despite Dirty (RefreshImage never uploads it), so
-    /// texture sets holding it hit their memo (gow3_image_state.h).
+    /// With GOW3_MSAA_UP_TO_DATE=1: a guest MSAA image counts as up to date despite Dirty, so
+    /// texture sets holding it hit their memo (gow3_image_state.h). Off by default: artifacts in
+    /// Killzone Shadow Fall.
     MsaaDirtyIgnored = 1ull << 59,
     /// A readback query outside the span of every pending GPU-to-RAM copy returns without the
     /// readback mutex (gow3_readback_bounds.h).

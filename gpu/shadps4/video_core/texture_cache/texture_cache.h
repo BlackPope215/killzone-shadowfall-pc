@@ -174,6 +174,14 @@ public:
         return UpToDate(image, flags);
     }
 
+    static bool MsaaUpToDateOptIn() {
+        static const bool on = [] {
+            const char* env = std::getenv("GOW3_MSAA_UP_TO_DATE");
+            return env && env[0] == '1';
+        }();
+        return on;
+    }
+
     /// gow3: IsUpToDate and the fast path of UpdateImage (gow3_image_state.h).
     [[nodiscard]] bool UpToDate(const Image& image, u32 flags) const {
         constexpr u32 Dirty = static_cast<u32>(ImageFlagBits::Dirty);
@@ -189,7 +197,10 @@ public:
             .backing_writes = has_backing_writes.load(std::memory_order_acquire),
             .tracked = image.track_addr == image.guest_begin && image.track_addr_end == image.guest_end,
             .touched = image.lru_touched_tick == gc_tick,
-            .msaa_dirty_ignored = dirty && !Gow3Toggle::Disabled(Gow3Toggle::MsaaDirtyIgnored),
+            // Off: in Killzone Shadow Fall it left stale MSAA images on screen (artifacts).
+            // GOW3_MSAA_UP_TO_DATE=1 turns it on to test it.
+            .msaa_dirty_ignored = dirty && MsaaUpToDateOptIn() &&
+                                  !Gow3Toggle::Disabled(Gow3Toggle::MsaaDirtyIgnored),
         });
     }
 
