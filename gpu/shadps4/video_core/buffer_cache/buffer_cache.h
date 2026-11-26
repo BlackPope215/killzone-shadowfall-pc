@@ -171,7 +171,8 @@ private:
 
     /// gow3: batched small copies on the copy threads (Gow3Copy::QueueCopy).
     static void RunGuestCopy(const Gow3Copy::Item& item);
-    void SmallGuestCopy(const Gow3Copy::Item& item);
+    enum class SmallCopyKind { Stream, Image, Upload };
+    void SmallGuestCopy(const Gow3Copy::Item& item, SmallCopyKind kind);
 
     const Buffer* UploadCopies(const Buffer* arena, std::span<vk::BufferCopy> copies,
                                size_t total_size_bytes);

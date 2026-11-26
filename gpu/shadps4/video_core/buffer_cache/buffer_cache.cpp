@@ -143,8 +143,15 @@ void BufferCache::RunGuestCopy(const Gow3Copy::Item& item) {
 // idle most of the time); PoolSmallCopies (toggle 524288) batches them for the copy threads.
 // gow3: SpartanPort 86b69e1 made the copy threads the default (God of War III +3.5%); in
 // Killzone Shadow Fall that put artifacts on screen, so the recording thread stays the default.
-void BufferCache::SmallGuestCopy(const Gow3Copy::Item& item) {
-    if (scheduler.IsRecordingDeferred() && !Gow3Toggle::Disabled(Gow3Toggle::PoolSmallCopies)) {
+// gow3: to find which kind of small copy is unsafe on the copy threads in Killzone Shadow Fall,
+// each kind can be sent there alone: 1 << 61 the read-only stream buffer (ObtainBuffer),
+// 1 << 62 image staging (ObtainBufferForImage), 1 << 63 buffer upload staging.
+void BufferCache::SmallGuestCopy(const Gow3Copy::Item& item, SmallCopyKind kind) {
+    const u64 kind_bit = kind == SmallCopyKind::Stream  ? Gow3Toggle::PoolStreamCopies
+                         : kind == SmallCopyKind::Image ? Gow3Toggle::PoolImageCopies
+                                                        : Gow3Toggle::PoolUploadCopies;
+    if (scheduler.IsRecordingDeferred() && !Gow3Toggle::Disabled(Gow3Toggle::PoolSmallCopies) &&
+        !Gow3Toggle::Disabled(kind_bit)) {
         scheduler.RecordHostCopy([item] { item.run(item); });
         return;
     }
@@ -401,7 +408,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                     .destination = reinterpret_cast<u64>(stream_buffer.mapped_data.data() + *offset),
                     .size = size,
                     .extra = reinterpret_cast<u64>(static_cast<Buffer*>(&stream_buffer)),
-                });
+                }, SmallCopyKind::Stream);
                 return {&stream_buffer, *offset};
             }
         }
@@ -451,7 +458,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_add
                 .extra = reinterpret_cast<u64>(staging.buffer),
             };
             if (staging.size < Chunk) {
-                SmallGuestCopy(item);
+                SmallGuestCopy(item, SmallCopyKind::Image);
             } else {
                 Gow3Copy::Async([item] { item.run(item); });
             }
@@ -702,7 +709,7 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
                 .destination = reinterpret_cast<u64>(staging.mapped + copy.srcOffset),
                 .size = copy.size,
                 .extra = reinterpret_cast<u64>(staging.buffer),
-            });
+            }, SmallCopyKind::Upload);
             copy.srcOffset += staging.offset;
             copy.dstOffset -= arena->cpu_addr;
         }

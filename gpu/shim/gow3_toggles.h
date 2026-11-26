@@ -81,6 +81,11 @@ enum : std::uint64_t {
     /// A readback query outside the span of every pending GPU-to-RAM copy returns without the
     /// readback mutex (gow3_readback_bounds.h).
     ReadbackBounds = 1ull << 60,
+    /// With PoolSmallCopies (524288) not set: one kind of small guest copy on the copy threads
+    /// (BufferCache::SmallGuestCopy): read-only stream buffer, image staging, upload staging.
+    PoolStreamCopies = 1ull << 61,
+    PoolImageCopies = 1ull << 62,
+    PoolUploadCopies = 1ull << 63,
     // Bits 20-29 are used as raw debug toggles by the camera/object motion and the upscaler.
 };
 inline bool Disabled(std::uint64_t bit) {
