@@ -469,6 +469,10 @@ int runtime_pad_prompt_binding(unsigned icon, char *label, size_t size) {
     static const struct { const char *name, *label; } short_names[]={
         {"Left Ctrl","CTRL"}, {"Right Ctrl","CTRL"}, {"Left Shift","SHIFT"}, {"Right Shift","SHIFT"},
         {"Left Alt","ALT"}, {"Right Alt","ALT"}, {"Left GUI","WIN"}, {"Right GUI","WIN"},
+        {"Keypad 0","KP0"}, {"Keypad 1","KP1"}, {"Keypad 2","KP2"}, {"Keypad 3","KP3"},
+        {"Keypad 4","KP4"}, {"Keypad 5","KP5"}, {"Keypad 6","KP6"}, {"Keypad 7","KP7"},
+        {"Keypad 8","KP8"}, {"Keypad 9","KP9"}, {"Keypad +","KPPLUS"}, {"Keypad -","KPMINUS"},
+        {"Keypad *","KPMUL"}, {"Keypad /","KPDIV"}, {"Keypad Decimal","KPDOT"},
         {"Return","ENTER"}, {"Keypad Enter","ENTER"}, {"Space","SPACE"}, {"Backspace","BKSP"},
         {"PageUp","PGUP"}, {"PageDown","PGDN"}, {"CapsLock","CAPS"}, {"Escape","ESC"},
         {"Up","UP"}, {"Down","DOWN"}, {"Left","LEFT"}, {"Right","RIGHT"}, {"Delete","DEL"}, {"Insert","INS"},
